@@ -1,0 +1,8 @@
+# Keep LF everywhere (shell scripts, systemd units, plists, JS) on every OS;
+# PowerShell and Windows batch files use CRLF.
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.png binary
+*.bin binary

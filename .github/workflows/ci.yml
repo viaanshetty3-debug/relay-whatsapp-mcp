@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests (${{ matrix.os }}, Node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: ['22']
+        include:
+          - os: ubuntu-latest
+            node: '24'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Relay worker tests
+        working-directory: relay-worker
+        run: npm test
+      - name: Claude doorway tests
+        working-directory: claude-proxy
+        run: npm test
+
+  autostart-linux:
+    name: Auto-start (Linux, systemd --user)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Enable a user systemd instance
+        run: |
+          sudo loginctl enable-linger "$USER"
+          echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
+          for i in $(seq 1 30); do [ -S "/run/user/$(id -u)/bus" ] && break; sleep 1; done
+      - name: Install, verify, crash-restart, uninstall
+        run: |
+          printf 'PORT=8795\nDATA_DIR=%s\n' "$RUNNER_TEMP/relay-data" > .env
+          npm run autostart
+          systemd-analyze --user verify ~/.config/systemd/user/whatsapp-relay.service
+          up() { for i in $(seq 1 60); do curl -sf -o /dev/null http://127.0.0.1:8795/ && return 0; sleep 1; done; return 1; }
+          up
+          systemctl --user is-active whatsapp-relay.service
+          BRIDGE=$(pgrep -f "src/main.js" | head -1); kill -9 "$BRIDGE"
+          sleep 3; up
+          test "$(pgrep -f 'src/main.js' | head -1)" != "$BRIDGE"
+          journalctl --user -u whatsapp-relay --no-pager | tail -20 || true
+          npm run autostart -- --uninstall
+          sleep 3
+          ! curl -sf -o /dev/null http://127.0.0.1:8795/
+          test ! -e ~/.config/systemd/user/whatsapp-relay.service
+
+  autostart-windows:
+    name: Auto-start (Windows, Task Scheduler)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Install, verify, uninstall
+        shell: pwsh
+        run: |
+          "PORT=8795`nDATA_DIR=$env:RUNNER_TEMP\relay-data" | Set-Content -Encoding ascii .env
+          npm run autostart -- --dry-run
+          npm run autostart
+          if ($LASTEXITCODE) { throw 'install failed' }
+          Get-ScheduledTask -TaskName 'WhatsApp Relay' | Format-List TaskName,State
+          $up = $false
+          for ($i = 0; $i -lt 90; $i++) { try { Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8795/ -TimeoutSec 2 | Out-Null; $up = $true; break } catch { Start-Sleep 1 } }
+          Get-Content "$env:GITHUB_WORKSPACE\data\service.log" -ErrorAction SilentlyContinue | Select-Object -Last 20
+          (Get-ScheduledTaskInfo -TaskName 'WhatsApp Relay') | Format-List LastRunTime,LastTaskResult
+          if (-not $up) { throw 'bridge did not start from the scheduled task' }
+          npm run autostart -- --uninstall
+          Start-Sleep 5
+          if (Get-ScheduledTask -TaskName 'WhatsApp Relay' -ErrorAction SilentlyContinue) { throw 'task still registered' }

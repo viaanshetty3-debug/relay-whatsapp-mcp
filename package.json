@@ -1,0 +1,32 @@
+{
+  "name": "whatsapp-relay",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Self-hosted WhatsApp dashboard and MCP tools for AI clients",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "setup": "node setup.mjs",
+    "start": "node src/main.js",
+    "demo": "node src/main.js --demo",
+    "agent": "node src/remote-agent.js",
+    "service": "node scripts/relay-service.mjs",
+    "autostart": "node scripts/install-autostart.mjs",
+    "mcp": "node src/stdio.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "@whiskeysockets/baileys": "7.0.0-rc14",
+    "express": "5.3.0",
+    "pino": "10.4.0",
+    "qrcode": "1.5.4",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "jsdom": "^30.1.3"
+  }
+}

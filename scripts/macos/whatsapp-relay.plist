@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  macOS launchd user agent for Relay: starts at login, restarts if it stops.
+  Installed for you by `npm run autostart`. To install by hand, replace the
+  {{...}} placeholders, save as ~/Library/LaunchAgents/{{LABEL}}.plist, then:
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/{{LABEL}}.plist
+  Remove:
+    launchctl bootout gui/$(id -u)/{{LABEL}} && rm ~/Library/LaunchAgents/{{LABEL}}.plist
+  Note: user agents start after you log in (FileVault Macs require a login after boot anyway).
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>{{LABEL}}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{NODE}}</string>
+    <string>{{RELAY_DIR}}/scripts/relay-service.mjs</string>
+  </array>
+  <key>WorkingDirectory</key><string>{{RELAY_DIR}}</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>ProcessType</key><string>Background</string>
+  <key>StandardOutPath</key><string>{{RELAY_DIR}}/data/service.log</string>
+  <key>StandardErrorPath</key><string>{{RELAY_DIR}}/data/service.log</string>
+</dict>
+</plist>

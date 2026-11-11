@@ -1,0 +1,24 @@
+# systemd user service for Relay: starts with your user session, restarts on failure.
+# Installed for you by `npm run autostart`. To install by hand, replace the
+# {{...}} placeholders and save as ~/.config/systemd/user/whatsapp-relay.service, then:
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now whatsapp-relay.service
+# Start at boot without logging in:   sudo loginctl enable-linger "$USER"
+# Logs:                               journalctl --user -u whatsapp-relay -f
+# Remove:  systemctl --user disable --now whatsapp-relay.service && rm ~/.config/systemd/user/whatsapp-relay.service
+[Unit]
+Description=Relay WhatsApp bridge for AI clients
+# (User services can't wait for network-online.target; the agent retries until the network is up.)
+
+[Service]
+Type=simple
+WorkingDirectory={{RELAY_DIR}}
+ExecStart={{NODE}} {{RELAY_DIR}}/scripts/relay-service.mjs
+Restart=always
+RestartSec=10
+# The bridge only listens on 127.0.0.1; keep the service's privileges minimal.
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

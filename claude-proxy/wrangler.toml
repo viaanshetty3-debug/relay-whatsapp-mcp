@@ -1,0 +1,25 @@
+# Relay "doorway" for Claude: a tiny Cloudflare Worker (free tier) that checks
+# the x-api-key header Claude sends and forwards MCP requests to your relay.
+#
+# Deploy (from this folder):
+#   1. npx wrangler login                        # once, free Cloudflare account
+#   2. npx wrangler deploy                       # creates https://whatsapp-claude.<your-subdomain>.workers.dev
+#   3. npx wrangler secret bulk .secrets.json    # written for you by `npm run setup` in the repo root
+# (or run `npm run deploy` here, which does steps 2 and 3)
+#
+# Secrets (never put them in this file):
+#   RELAY_URL   your relay's MCP endpoint, e.g. https://your-relay.example.com/whatsapp/mcp
+#   PROXY_KEY   the key Claude sends in the x-api-key header
+#   CLIENT_KEY  must equal the relay's WA_CLIENT_KEY
+#   SITE_KEY    optional: only for relays hosted on ChatGPT Sites
+name = "whatsapp-claude"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+workers_dev = true
+
+# Direct link to the relay Worker (relay-worker/, deploy it first). Required when
+# both Workers are on the same Cloudflare account: Workers can't call each
+# other's workers.dev URLs. Remove this block if your relay is hosted elsewhere.
+[[services]]
+binding = "RELAY"
+service = "whatsapp-relay"

@@ -1,0 +1,51 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+.dev.vars*
+*.pem
+*.key
+.proxy-key
+deploy/selfhost.env
+
+# WhatsApp auth / session data and local databases (never commit)
+data/
+demo-data/
+auth/
+auth_info*/
+**/auth.moved-*/
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+remote-link.json
+owner-token
+.session-transfer-*/
+.migration-backups/
+
+# Logs and runtime state
+*.log
+logs/
+*.pid
+
+# Private notes
+CONTINUE-ON-MAC.md
+
+# Dependencies, builds, caches
+node_modules/
+dist/
+.next/
+.wrangler/
+.sites-runtime/
+__pycache__/
+*.pyc
+.media-venv/
+.media-models/
+*.zip
+
+# OS
+.DS_Store
+
+# Secrets written by `npm run setup`
+.secrets.json
+.env.backup-*

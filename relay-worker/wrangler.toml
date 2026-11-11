@@ -1,0 +1,19 @@
+# Relay worker: the hosted job queue between AI apps and your bridge(s).
+# Runs on Cloudflare's free Workers + D1 plans.
+#
+# Deploy (from this folder):
+#   1. npx wrangler login
+#   2. npx wrangler d1 create whatsapp-relay      # copy the database_id it prints into [[d1_databases]] below
+#   3. npx wrangler deploy                        # → https://whatsapp-relay.<your-subdomain>.workers.dev
+#   4. npx wrangler secret bulk .secrets.json     # written here by `npm run setup` (WA_AGENT_KEY, WA_CLIENT_KEY)
+# (`npm run deploy` runs steps 3 and 4.)
+# Tables are created automatically on first use.
+name = "whatsapp-relay"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+workers_dev = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "whatsapp-relay"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"

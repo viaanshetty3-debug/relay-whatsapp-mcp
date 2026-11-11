@@ -1,0 +1,7 @@
+{
+    email {$RELAY_ACME_EMAIL}
+}
+
+{$RELAY_DOMAIN} {
+    reverse_proxy bridge:8787
+}
