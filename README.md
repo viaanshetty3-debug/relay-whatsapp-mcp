@@ -2,6 +2,7 @@
 
 **Your WhatsApp, as 37 MCP tools for Claude and ChatGPT: self-hosted, failover-ready, and free to run.**
 
+[![CI](https://github.com/viaanshetty3-debug/relay-whatsapp-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/viaanshetty3-debug/relay-whatsapp-mcp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node.js ≥ 22.13](https://img.shields.io/badge/node-%E2%89%A5%2022.13-339933.svg?logo=node.js&logoColor=white)](https://nodejs.org)
 [![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#auto-start-on-login)
@@ -69,7 +70,7 @@ These measures reduce the risk; they can't make a language model immune to manip
 **You need:** Node.js 22.13+ and WhatsApp on your phone.
 
 ```sh
-git clone https://github.com/<you>/relay.git && cd relay
+git clone https://github.com/viaanshetty3-debug/relay-whatsapp-mcp.git && cd relay-whatsapp-mcp
 npm install
 npm run setup
 ```
@@ -90,7 +91,7 @@ Open <http://127.0.0.1:8787>, choose **Connect WhatsApp**, and on your phone go 
 
 > Check my WhatsApp connection and list my 3 most recent chats. Don't send anything.
 
-To see your configs again later: `npm run setup -- --print`.
+To see your configs again later: `npm run setup -- --print`. If anything seems off, run **`npm run doctor`**. In a few seconds it checks Node, your `.env`, the bridge and WhatsApp session, the relay and the Claude doorway, and says what to fix.
 
 ### Keep it running
 
@@ -231,6 +232,8 @@ Relay secrets: `WA_AGENT_KEY`, `WA_CLIENT_KEY` ([relay-worker/.env.example](rela
 ---
 
 ## Troubleshooting
+
+**Start with `npm run doctor`.** It catches most of the problems below automatically.
 
 | Symptom | Fix |
 | --- | --- |

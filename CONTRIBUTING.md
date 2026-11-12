@@ -13,7 +13,7 @@ Thanks for helping! Relay touches people's private messages, so we care most abo
 ## Development setup
 
 ```sh
-git clone https://github.com/<you>/relay.git && cd relay
+git clone https://github.com/viaanshetty3-debug/relay-whatsapp-mcp.git && cd relay-whatsapp-mcp
 npm install
 npm run demo          # dashboard with demo data on http://127.0.0.1:8787; never contacts WhatsApp
 ```
@@ -25,6 +25,7 @@ Requirements: Node.js 22.13+ (uses the built-in `node:sqlite`, `node:test` and `
 ## Tests
 
 ```sh
+npm run lint                                # syntax check + bridge/relay tool catalogs match
 npm test                                    # bridge, relay broker, failover, setup, auto-start
 (cd relay-worker && npm test)               # standalone relay worker
 (cd claude-proxy && npm test)               # Claude doorway

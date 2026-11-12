@@ -10,13 +10,15 @@
   },
   "scripts": {
     "setup": "node setup.mjs",
+    "doctor": "node scripts/doctor.mjs",
     "start": "node src/main.js",
     "demo": "node src/main.js --demo",
     "agent": "node src/remote-agent.js",
     "service": "node scripts/relay-service.mjs",
     "autostart": "node scripts/install-autostart.mjs",
     "mcp": "node src/stdio.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "lint": "node scripts/lint.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",

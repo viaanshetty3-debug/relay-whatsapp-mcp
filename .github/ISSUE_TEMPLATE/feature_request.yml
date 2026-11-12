@@ -1,0 +1,29 @@
+name: Feature request
+description: Suggest a tool, platform or improvement
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like Relay to do?
+    validations:
+      required: true
+  - type: dropdown
+    id: write
+    attributes:
+      label: Would it send or change anything on WhatsApp?
+      description: Write actions get extra safety review (no automatic retries, untrusted-content handling).
+      options:
+        - "No, read-only"
+        - "Yes, it sends or changes something"
+        - "Not sure"
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else? (alternatives, examples)

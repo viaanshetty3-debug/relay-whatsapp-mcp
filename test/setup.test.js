@@ -117,3 +117,17 @@ test('setup: a standby on a workers.dev relay checks less often (free tier)',()=
   assert.equal(standby.RELAY_WATCH_MS,'3000');assert.equal(first.RELAY_WATCH_MS,undefined);
   assert.equal(parseEnv(serializeEnv(standby)).RELAY_WATCH_MS,'3000');
 });
+test('doctor: flags bad Node versions and incomplete relay settings without printing secrets',async()=>{
+  const {checkNode,checkEnv}=await import('../scripts/doctor.mjs');
+  assert.equal(checkNode('22.12.0').status,'fail');assert.equal(checkNode('22.13.0').status,'ok');
+  assert.equal(checkEnv({},false)[0].status,'warn');
+  assert.equal(checkEnv({},true).find(r=>r.name==='Relay').status,'info');
+  const secret='x'.repeat(10);
+  const bad=checkEnv({RELAY_REMOTE_URL:'http://r.example',RELAY_AGENT_KEY:secret,RELAY_AGENT_ID:'nope'},true);
+  assert.ok(bad.some(r=>r.name==='RELAY_REMOTE_URL'&&r.status==='fail'));assert.ok(bad.some(r=>r.name==='RELAY_AGENT_KEY'&&r.status==='fail'));
+  assert.ok(!JSON.stringify(bad).includes(secret),'never echoes key values');
+  const {env}=buildSettings({mode:'first',relayUrl:'whatsapp-relay.you.workers.dev'});
+  assert.ok(checkEnv(env,true).every(r=>r.status!=='fail'));
+  const standby={...env,RELAY_FAILOVER_ROLE:'standby',RELAY_WATCH_MS:'750'};
+  assert.equal(checkEnv(standby,true).find(r=>r.name==='RELAY_WATCH_MS').status,'warn');
+});
