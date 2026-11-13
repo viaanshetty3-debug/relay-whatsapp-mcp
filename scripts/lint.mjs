@@ -30,7 +30,7 @@ const bridge = [...[...source.matchAll(/\badd\('([a-z_]+)'/g)].map(m => m[1]), '
 const missing = catalog.filter(n => !bridge.includes(n)), extra = bridge.filter(n => !catalog.includes(n));
 if (missing.length || extra.length) { failed++; console.error('✗ tool catalogs differ. Relay only: ' + missing.join(', ') + ' | bridge only: ' + extra.join(', ')); }
 
-try { execFileSync(process.execPath, [join(root, 'scripts', 'tool-catalog.mjs'), '--check'], { stdio: 'pipe' }); }
-catch (error) { failed++; console.error(String(error.stderr || error.message)); }
+// The full schema check (scripts/tool-catalog.mjs --check) needs the installed packages,
+// so it runs in the test suite (test/package.test.js); lint stays dependency-free.
 console.log(`${failed ? '✗' : '✓'} ${files.length} files syntax-checked; bridge and relay share ${catalog.length} tools`);
 process.exitCode = failed ? 1 : 0;

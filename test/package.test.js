@@ -100,3 +100,8 @@ test('start opens the browser only for a person at a terminal', async () => {
   assert.deepEqual(openBrowserCommand('http://127.0.0.1:8787', 'linux'), ['xdg-open', ['http://127.0.0.1:8787']]);
   assert.equal(openBrowserCommand('http://127.0.0.1:8787', 'win32')[0], 'cmd');
 });
+
+test('the hosted relay\'s tool catalog matches the bridge (profile argument and list_profiles included)', async () => {
+  const out = execFileSync(process.execPath, [fileURLToPath(new URL('../scripts/tool-catalog.mjs', import.meta.url)), '--check'], { encoding: 'utf8' });
+  assert.match(out, /up to date/);
+});
