@@ -949,7 +949,8 @@
             "analyze",
             "ocr",
             "extract",
-            "cache"
+            "cache",
+            "summarize"
           ]
         },
         "prompt": {

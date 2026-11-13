@@ -8,6 +8,19 @@ import pino from 'pino';
 import { hasLinkedCredentials } from './session-state.js';
 import { mediaInfo, MEDIA_KINDS, MEDIA_LIMIT } from './media.js';
 
+// ----- call logs -----
+// WhatsApp reports calls three ways: live call events on this linked device, "missed call" notices,
+// and call-log entries inside chats. Relay keeps one entry per call in the chat, like WhatsApp does.
+const MISSED_STUBS={40:{video:false},41:{video:true},45:{video:false,group:true},46:{video:true,group:true}};
+const OUTCOMES=['answered','missed','failed','declined','answered on another device','ongoing','silenced (Do Not Disturb)','silenced (unknown caller)'];
+export function callText({video,direction,outcome,durationSecs,group}) {
+  const what=`${group?'group ':''}${video?'video':'voice'} call`;
+  const length=durationSecs>0?(durationSecs>=60?`${Math.floor(durationSecs/60)} min ${durationSecs%60} s`:`${durationSecs} s`):'';
+  if(outcome==='missed')return `${video?'📹':'📞'} Missed ${what}`;
+  if(outcome==='ringing')return `${video?'📹':'📞'} Incoming ${what}…`;
+  const head=`${video?'📹':'📞'} ${direction==='outgoing'?'Outgoing ':direction==='incoming'?'Incoming ':''}${what}`;
+  return [head,outcome&&outcome!=='answered'&&outcome!=='ended'?outcome:'',length].filter(Boolean).join(' · ');
+}
 export class WhatsApp extends EventEmitter {
   constructor(store,config,library) {
     super(); this.store=store;this.config=config;this.state='disconnected';this.qr=null;this.stopped=true;this.attempt=0;this.lib=library;this.credentialWrites=Promise.resolve();
@@ -99,6 +112,7 @@ export class WhatsApp extends EventEmitter {
         this.store.transaction(()=>{for(const c of chats){const id=this.canonical(c.id);if(this.permitted(id))this.store.put('chats',{...c,id});}for(const c of contacts)if(this.permitted(c.id))this.store.put('contacts',c);for(const m of messages)this.ingest(m,false);});
         this.store.event('history',null,{messages:messages.length});
       });
+      on('call',calls=>{for(const c of calls || [])this.onCall(c);});
       on('lid-mapping.update',value=>{for(const v of Array.isArray(value)?value:[value])this.learnLid(v?.lid,v?.pn);});
       on('messages.upsert',({messages,type})=>{for(const m of messages)this.ingest(m,type==='notify');});
       for(const type of ['chats.upsert','chats.update','contacts.upsert','contacts.update'])on(type,items=>{
@@ -152,6 +166,12 @@ export class WhatsApp extends EventEmitter {
       if(p.type===0 && p.key?.id){const old=this.store.getMessage(chat,p.key.id);if(old)this.store.message({...old,deleted:true});this.store.event('message.delete',chat,{id:p.key.id});}
       return;
     }
+    const missed=MISSED_STUBS[m.messageStubType];
+    if(missed)return this.storeCall(chat,id,Number(m.messageTimestamp)||Math.floor(Date.now()/1000),{...missed,direction:'incoming',outcome:'missed'},live,m.key);
+    if(body.callLogMesssage){
+      const c=body.callLogMesssage,duration=Number(c.durationSecs?.low ?? c.durationSecs) || 0;
+      return this.storeCall(chat,id,Number(m.messageTimestamp)||Math.floor(Date.now()/1000),{video:!!c.isVideo,direction:m.key.fromMe?'outgoing':'incoming',outcome:OUTCOMES[c.callOutcome] || 'ended',durationSecs:duration,group:(c.participants||[]).length>1},live,m.key);
+    }
     const kind=Object.keys(body).find(k=>!['messageContextInfo','senderKeyDistributionMessage'].includes(k));
     if(!kind)return;
     const content=body[kind];
@@ -163,6 +183,35 @@ export class WhatsApp extends EventEmitter {
     const oldChat=this.store.getChat(chat);
     this.store.put('chats',{id:chat,...(!oldChat?.conversationTimestamp || timestamp>=Number(oldChat.conversationTimestamp)?{conversationTimestamp:timestamp,preview:text}:{}),...(!m.key.fromMe&&m.pushName&&!chat.endsWith('@g.us')&&!oldChat?.name?{name:m.pushName}:{})});
     if(live&&fresh)this.store.event('message',chat,{...value,raw:undefined});
+  }
+  // One entry per call, keyed by the call ID, so later updates (answered, ended) refine the same entry.
+  storeCall(chat,id,timestamp,info,live,key) {
+    if(!chat || !id || !this.permitted(chat))return;
+    const old=this.store.getMessage(chat,id),merged={...(old?.call||{}),...info};
+    if(old?.call?.outcome&&old.call.outcome!=='ringing'&&info.outcome==='ringing')return; // don't go backwards
+    const text=callText(merged);
+    const value={chat,id,key:key || {remoteJid:chat,id,fromMe:merged.direction==='outgoing'},fromMe:merged.direction==='outgoing',sender:merged.direction==='outgoing'?this.sock?.user?.id:chat,text,kind:'call',timestamp:old?.timestamp || timestamp,call:merged,hasMedia:false};
+    const fresh=this.store.message(value);
+    const chatRow=this.store.getChat(chat);
+    if(!chatRow?.conversationTimestamp || value.timestamp>=Number(chatRow.conversationTimestamp))this.store.put('chats',{id:chat,conversationTimestamp:value.timestamp,preview:text});
+    if(live)this.store.event(fresh?'call':'call.update',chat,{...value});
+  }
+  // Live call events reach Relay because it's a linked device: incoming calls ring here too.
+  onCall(c) {
+    this.learnLid(c.from,c.callerPn);
+    const chat=this.canonical(c.isGroup&&c.groupJid?c.groupJid:(c.callerPn || c.chatId || c.from)),at=Math.floor(new Date(c.date).getTime()/1000) || Math.floor(Date.now()/1000);
+    const live=this._calls || (this._calls=new Map()),state=live.get(c.id) || {};
+    const base={video:!!c.isVideo,group:!!c.isGroup,direction:'incoming'};
+    if(c.status==='offer' || c.status==='ringing'){live.set(c.id,{...state,start:at});return this.storeCall(chat,c.id,at,{...base,outcome:'ringing'},true);}
+    if(c.status==='accept'){live.set(c.id,{...state,accepted:at});return this.storeCall(chat,c.id,at,{...base,outcome:'answered'},true);}
+    if(c.status==='reject'){live.delete(c.id);return this.storeCall(chat,c.id,at,{...base,outcome:'declined'},true);}
+    if(c.status==='timeout'){live.delete(c.id);return this.storeCall(chat,c.id,at,{...base,outcome:'missed'},true);}
+    if(c.status==='terminate'){
+      live.delete(c.id);
+      const durationSecs=state.accepted?Math.max(0,at-state.accepted):0;
+      const outcome=state.accepted?'answered':(this.store.getMessage(chat,c.id)?.call?.outcome==='ringing'?'missed':undefined);
+      return this.storeCall(chat,c.id,at,{...base,...(outcome?{outcome}:{}),...(durationSecs?{durationSecs}:{})},true);
+    }
   }
   connected() { if(this.state!=='connected' || !this.sock)throw new Error('WhatsApp is not connected. Pair it in the dashboard first.');return this.sock; }
   async pair(phone) {

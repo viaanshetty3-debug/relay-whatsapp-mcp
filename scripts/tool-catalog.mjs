@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Keeps relay-worker/src/lib/whatsapp-tools.json (the tool list remote AI clients see) in step with
-// the bridge: every tool gets the bridge's `profile` argument and list_profiles is included.
+// the bridge: every tool's arguments match the bridge's, and list_profiles is included.
 // The catalog keeps its own remote-specific descriptions.
 //   node scripts/tool-catalog.mjs          update the file
 //   node scripts/tool-catalog.mjs --check  exit 1 if it is out of date
@@ -22,8 +22,14 @@ const current = readFileSync(path, 'utf8');
 const catalog = JSON.parse(current);
 const byName = new Map(live.map(t => [t.name, t]));
 for (const tool of catalog) {
-  const profile = byName.get(tool.name)?.inputSchema.properties?.profile;
-  if (profile) tool.inputSchema.properties.profile = profile;
+  // Only additions: new arguments and new enum choices. The catalog's own limits stay (for example the
+  // remote transport's smaller inline-upload size).
+  const live = byName.get(tool.name)?.inputSchema.properties || {};
+  const props = tool.inputSchema.properties ||= {};
+  for (const [name, schema] of Object.entries(live)) {
+    if (!props[name]) props[name] = schema;
+    else if (Array.isArray(schema.enum) && Array.isArray(props[name].enum)) props[name].enum = [...new Set([...props[name].enum, ...schema.enum])];
+  }
 }
 if (!catalog.some(t => t.name === 'list_profiles')) catalog.push(byName.get('list_profiles'));
 const text = JSON.stringify(catalog, null, 2) + '\n';

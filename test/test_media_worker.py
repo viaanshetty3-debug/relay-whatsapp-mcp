@@ -41,4 +41,18 @@ class MediaWorkerTest(unittest.TestCase):
         finally:worker.describe=original
         self.assertEqual(result['text'],'OCR fixture text');self.assertTrue((self.work/'page-0.jpg').exists())
 
+    def test_summarize_extracts_then_summarizes_locally(self):
+        text=self.work/'note.txt';text.write_text('Pick up Veda at 5 pm on Friday. Bring the blue bag.')
+        calls=[];original=worker.summarize
+        try:
+            worker.summarize=lambda content,prompt=None:(calls.append((content,prompt)) or ('- Pick up Veda Friday 5 pm','test-model'))
+            result=worker.process(self.request(text,'text/plain','summarize',prompt='One line please'))
+        finally:worker.summarize=original
+        self.assertEqual(result['mode'],'summarize');self.assertEqual(result['summary'],'- Pick up Veda Friday 5 pm')
+        self.assertTrue(result['text'].startswith('Summary:\n- Pick up Veda'));self.assertIn('Pick up Veda at 5 pm',calls[0][0])
+        self.assertEqual(calls[0][1],'One line please');self.assertTrue(any('local model' in w for w in result['warnings']))
+    def test_summarize_refuses_when_there_is_nothing_to_summarize(self):
+        empty=self.work/'empty.txt';empty.write_text('   ')
+        with self.assertRaises(RuntimeError):worker.process(self.request(empty,'text/plain','summarize'))
+
 if __name__=='__main__':unittest.main()
