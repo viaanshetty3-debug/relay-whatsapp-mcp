@@ -7,7 +7,7 @@ import { home, packageDir } from '../src/paths.js';
 
 const COMMANDS = {
   setup: ['setup.mjs', 'create .env with fresh keys and print your AI client configs'],
-  start: ['src/main.js', 'run the bridge; link WhatsApp in its dashboard at http://127.0.0.1:8787'],
+  start: ['src/main.js', 'run Relay and open its dashboard (http://127.0.0.1:8787): sign in, then link WhatsApp'],
   demo: ['src/main.js --demo', 'run with sample chats (no WhatsApp account needed)'],
   service: ['scripts/relay-service.mjs', 'run the bridge (and relay agent, if configured) with automatic restarts'],
   autostart: ['scripts/install-autostart.mjs', 'start Relay at login (--dry-run, --uninstall)'],
@@ -16,11 +16,12 @@ const COMMANDS = {
   mcp: ['src/stdio.js', 'stdio MCP server for Claude Desktop / Claude Code (the bridge must be running)'],
 };
 
-const [name, ...rest] = process.argv.slice(2);
+// With no command, start Relay and open it in the browser.
+const [name = 'start', ...rest] = process.argv.slice(2);
 const version = JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8')).version;
 
-if (!name || name === 'help' || name === '--help' || name === '-h') {
-  console.log(`relay-whatsapp-mcp ${version}: WhatsApp as MCP tools for Claude and ChatGPT\n\nUsage: npx relay-whatsapp-mcp <command>\n`);
+if (name === 'help' || name === '--help' || name === '-h') {
+  console.log(`relay-whatsapp-mcp ${version}: WhatsApp as MCP tools for Claude and ChatGPT\n\nUsage: npx relay-whatsapp-mcp [command]   (no command: start Relay and open it in your browser)\n`);
   for (const [cmd, [, text]] of Object.entries(COMMANDS)) console.log(`  ${cmd.padEnd(10)} ${text}`);
   console.log(`\nPrivate files (.env, WhatsApp session, data): ${home}\nSet RELAY_HOME to use another folder. Docs: https://github.com/viaanshetty3-debug/relay-whatsapp-mcp`);
   process.exit(0);

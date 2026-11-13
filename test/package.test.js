@@ -87,3 +87,16 @@ test('npm pack: only source, scripts and docs; never .env, sessions, keys or tes
   const leaked = files.filter(f => forbidden.test(f));
   assert.deepEqual(leaked, [], 'must never be packed');
 });
+
+test('start opens the browser only for a person at a terminal', async () => {
+  const { shouldOpenBrowser, openBrowserCommand } = await import('../src/open-browser.js');
+  const desktop = { DISPLAY: ':0' };
+  assert.equal(shouldOpenBrowser({ env: desktop, isTTY: true }), true);
+  assert.equal(shouldOpenBrowser({ env: desktop, isTTY: false }), false, 'background service / auto-start');
+  assert.equal(shouldOpenBrowser({ env: { ...desktop, CI: 'true' }, isTTY: true }), false);
+  assert.equal(shouldOpenBrowser({ env: { ...desktop, RELAY_NO_BROWSER: '1' }, isTTY: true }), false);
+  assert.equal(shouldOpenBrowser({ env: desktop, isTTY: true, production: true }), false);
+  assert.deepEqual(openBrowserCommand('http://127.0.0.1:8787', 'darwin'), ['open', ['http://127.0.0.1:8787']]);
+  assert.deepEqual(openBrowserCommand('http://127.0.0.1:8787', 'linux'), ['xdg-open', ['http://127.0.0.1:8787']]);
+  assert.equal(openBrowserCommand('http://127.0.0.1:8787', 'win32')[0], 'cmd');
+});
