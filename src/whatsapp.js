@@ -90,7 +90,7 @@ export class WhatsApp extends EventEmitter {
       on('creds.update',()=>{this.credentialWrites=this.credentialWrites.then(saveCreds);return this.credentialWrites;});
       on('connection.update',async ({connection,qr,lastDisconnect})=>{
         if(qr) { const image=await QRCode.toDataURL(qr);if(this.sock!==sock || this.stopped)return;this.state='pairing';this.qr=image;this.error=null;this.emit('status',this.status()); }
-        if(connection==='open') {this.state='connected';this.qr=null;this.error=null;this.attempt=0;this.emit('status',this.status());this.resolveLids().catch(()=>{});}
+        if(connection==='open') {this.state='connected';this.qr=null;this.error=null;this.attempt=0;this.emit('status',this.status());this.resolveLids().catch(()=>{});try{this.repairStored();}catch{}}
         if(connection==='close') {
           await this.credentialWrites;
           if(this.sock!==sock || this.stopped)return;
@@ -158,13 +158,19 @@ export class WhatsApp extends EventEmitter {
     if(body.protocolMessage?.editedMessage) {
       const key=body.protocolMessage.key;
       const old=this.raw(chat,key?.id);
-      if(old)this.ingest({...old,message:body.protocolMessage.editedMessage},false);
+      if(old){this.ingest({...old,message:body.protocolMessage.editedMessage},false);const now=this.store.getMessage(chat,key.id);if(now)this.store.message({...now,edited:true});}
       this.store.event('message.edit',chat,{id:key?.id});return;
     }
     if(body.protocolMessage) {
       const p=body.protocolMessage;
       if(p.type===0 && p.key?.id){const old=this.store.getMessage(chat,p.key.id);if(old)this.store.message({...old,deleted:true});this.store.event('message.delete',chat,{id:p.key.id});}
       return;
+    }
+    // Newer WhatsApp sends edits encrypted with the original message's secret: decrypt, then apply as an edit.
+    if(body.secretEncryptedMessage){
+      const edit=this.decryptEdit(chat,m.key,body.secretEncryptedMessage);
+      if(edit)return this.ingest({...m,message:edit},live);
+      return; // not readable (yet): never show it as a message
     }
     const missed=MISSED_STUBS[m.messageStubType];
     if(missed)return this.storeCall(chat,id,Number(m.messageTimestamp)||Math.floor(Date.now()/1000),{...missed,direction:'incoming',outcome:'missed'},live,m.key);
@@ -183,6 +189,37 @@ export class WhatsApp extends EventEmitter {
     const oldChat=this.store.getChat(chat);
     this.store.put('chats',{id:chat,...(!oldChat?.conversationTimestamp || timestamp>=Number(oldChat.conversationTimestamp)?{conversationTimestamp:timestamp,preview:text}:{}),...(!m.key.fromMe&&m.pushName&&!chat.endsWith('@g.us')&&!oldChat?.name?{name:m.pushName}:{})});
     if(live&&fresh)this.store.event('message',chat,{...value,raw:undefined});
+  }
+  // Decrypts an encrypted edit ("Message Edit"): key = HKDF(original messageSecret, id + original author
+  // + editor + "Message Edit"), AES-256-GCM. Returns the inner message (a protocolMessage edit) or null.
+  decryptEdit(chat,key,enc) {
+    const type=enc.secretEncType;if(!(type===2 || type==='MESSAGE_EDIT'))return null;
+    const target=enc.targetMessageKey;if(!target?.id)return null;
+    const original=this.raw(chat,target.id);const secret=original?.message?.messageContextInfo?.messageSecret;if(!secret)return null;
+    const bin=v=>typeof v==='string'?Buffer.from(v,'base64'):Buffer.from(v||[]),bare=j=>j?String(j).replace(/:\d+@/,'@'):null;
+    const me=[this.sock?.user?.lid,this.sock?.user?.id].map(bare).filter(Boolean);
+    const authors=k=>[...new Set((k?.fromMe?me:[k?.participant,k?.participantAlt,k?.remoteJid,k?.remoteJidAlt]).map(bare).filter(j=>j&&!j.endsWith('@g.us')))];
+    const {hmacSign,aesDecryptGCM,proto}=this.lib;
+    const prk=hmacSign(bin(secret),new Uint8Array(32),'sha256');
+    // The original author comes from the stored original: the edit's own targetMessageKey says fromMe
+    // from the editor's side.
+    for(const creator of authors(original.key || target))for(const editor of authors(key)){
+      try{
+        const info=Buffer.concat([Buffer.from(target.id),Buffer.from(creator),Buffer.from(editor),Buffer.from('Message Edit'),new Uint8Array([1])]);
+        const plain=aesDecryptGCM(bin(enc.encPayload),hmacSign(info,prk,'sha256'),bin(enc.encIv),Buffer.alloc(0));
+        return proto.Message.decode(plain);
+      }catch{}
+    }
+    return null;
+  }
+  // Earlier versions stored encrypted edits as unreadable messages: apply them now and remove the rows.
+  repairStored() {
+    for(const r of this.store.db.prepare("SELECT data FROM messages WHERE json_extract(data,'$.kind')='secretEncryptedMessage'").all()){
+      const m=JSON.parse(r.data),raw=m.raw?JSON.parse(m.raw,this.BufferJSON?.reviver):null;
+      const edit=raw&&this.decryptEdit(m.chat,raw.key,raw.message?.secretEncryptedMessage || {});
+      if(edit)this.ingest({...raw,message:edit},false);
+      this.store.db.prepare('DELETE FROM messages WHERE chat=? AND id=?').run(m.chat,m.id);
+    }
   }
   // One entry per call, keyed by the call ID, so later updates (answered, ended) refine the same entry.
   storeCall(chat,id,timestamp,info,live,key) {

@@ -79,3 +79,26 @@ test('load older messages asks the phone for history before the oldest synced me
   await assert.rejects(wa.loadOlder('6500000000@s.whatsapp.net'), /no messages/);
   assert.equal(store.messages({ chat: MUM_PN }).length, 2);
 });
+
+test('encrypted edits (secretEncryptedMessage) are decrypted and applied, never shown as a message', async t => {
+  const { store, wa } = await setup(t);
+  const { hmacSign, aesEncryptGCM, proto } = await import('@whiskeysockets/baileys');
+  const group = '120363000000000001@g.us', dad = '169000000000001@lid', secret = Buffer.alloc(32, 7);
+  wa.ingest({ key: { remoteJid: group, id: 'orig-1', fromMe: false, participant: dad }, messageTimestamp: 1794470000, message: { conversation: 'See you at 5', messageContextInfo: { messageSecret: secret } } });
+  const inner = proto.Message.encode({ protocolMessage: { type: 14, key: { remoteJid: group, id: 'orig-1', fromMe: true }, editedMessage: { conversation: 'See you at 6' } } }).finish();
+  const info = Buffer.concat([Buffer.from('orig-1'), Buffer.from(dad), Buffer.from(dad), Buffer.from('Message Edit'), new Uint8Array([1])]);
+  const key = hmacSign(info, hmacSign(secret, new Uint8Array(32), 'sha256'), 'sha256'), iv = Buffer.alloc(12, 3);
+  const encPayload = aesEncryptGCM(Buffer.from(inner), key, iv, Buffer.alloc(0));
+  // WhatsApp marks the target fromMe from the editor's side.
+  wa.ingest({ key: { remoteJid: group, id: 'edit-1', fromMe: false, participant: dad.replace('@', ':12@') }, messageTimestamp: 1794470100, message: { secretEncryptedMessage: { targetMessageKey: { remoteJid: group, id: 'orig-1', fromMe: true }, encPayload, encIv: iv, secretEncType: 2 } } });
+  assert.equal(store.getMessage(group, 'orig-1').text, 'See you at 6');
+  assert.equal(store.getMessage(group, 'orig-1').edited, true);
+  assert.equal(store.getMessage(group, 'edit-1'), undefined, 'the control message is not stored');
+  // One that can't be decrypted (unknown original) is dropped rather than shown as "[secretEncryptedMessage]".
+  wa.ingest({ key: { remoteJid: group, id: 'edit-2', fromMe: false, participant: dad }, messageTimestamp: 1794470200, message: { secretEncryptedMessage: { targetMessageKey: { remoteJid: group, id: 'missing' }, encPayload, encIv: iv, secretEncType: 2 } } });
+  assert.equal(store.getMessage(group, 'edit-2'), undefined);
+  // Rows saved by older versions are repaired.
+  store.message({ chat: group, id: 'old-row', kind: 'secretEncryptedMessage', timestamp: 1794470300, text: '', raw: JSON.stringify({ key: { remoteJid: group, id: 'old-row', participant: dad }, message: { secretEncryptedMessage: { targetMessageKey: { remoteJid: group, id: 'orig-1', fromMe: true }, encPayload: encPayload.toString('base64'), encIv: iv.toString('base64'), secretEncType: 'MESSAGE_EDIT' } } }) });
+  wa.repairStored();
+  assert.equal(store.getMessage(group, 'old-row'), undefined);
+});
