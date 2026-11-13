@@ -15,7 +15,7 @@ new_sqlite_classes = ["AccountsStore"]
 [vars]
 DAILY_EMAIL_LIMIT = "450"
 # Client IDs are public; add each provider's ID here once its OAuth app exists:
-# GOOGLE_CLIENT_ID = "..."
+GOOGLE_CLIENT_ID = "369558608563-1k8rrrp2mngb4eqgvp08dbrajbkm1k0o.apps.googleusercontent.com"
 # MICROSOFT_CLIENT_ID = "..."
 GITHUB_CLIENT_ID = "Ov23liBHCVu0DwQN3ILV"
 # FACEBOOK_CLIENT_ID = "..."

@@ -219,6 +219,14 @@ async function gmailCallback(url, env, fetchImpl) {
   return page('Gmail connected', `Relay will send sign-in codes from ${esc(env.SENDER_EMAIL)}. You can close this page.`);
 }
 
+const REPO = '<a href="https://github.com/viaanshetty3-debug/relay-whatsapp-mcp">Relay</a>';
+const PRIVACY = `Relay Accounts helps people sign in to their own ${REPO} bridge, an open-source WhatsApp bridge that runs on their own computer.<br><br>
+<b>What it handles.</b> When you sign in with Google, Microsoft, GitHub or Facebook, it receives your account ID, name, email address and whether that email is verified, and passes them, signed, straight back to your own Relay bridge. When Relay emails you a code, it receives the email address and the 5-digit code and sends that one email through Gmail.<br><br>
+<b>What it keeps.</b> No accounts, names, emails or codes are stored. It keeps only rate-limit counters (keyed by a one-way hash of the email address and of the network address), which are deleted daily, and the token for the Gmail account that sends the codes. Your account and password live only on your own bridge; the service never sees your password.<br><br>
+<b>What it never does.</b> It doesn't sell or share data, show ads, track you, or use data from Google or other providers for anything except signing you in. Use of information received from Google APIs adheres to the Google API Services User Data Policy, including the Limited Use requirements.<br><br>
+<b>Questions or removal.</b> Open an issue on the Relay GitHub repository. The source code of this service is public in the repository's accounts-worker folder.`;
+const TERMS = `Relay Accounts is a free service for signing in to ${REPO} bridges, provided as is, without warranty. Use it only to sign in to a Relay bridge you own or are allowed to use. Don't use it to send unwanted email; codes are rate-limited. The service may change or stop; Relay can always run without it (set RELAY_ACCOUNTS_URL=off and use your own email server or sign-in apps). See also the <a href="/privacy">privacy policy</a>.`;
+
 export default {
   async fetch(request, env, ctx, fetchImpl = fetch) {
     const url = new URL(request.url);
@@ -236,7 +244,9 @@ export default {
       if (cb) return await oauthCallback(url, env, cb[1], fetchImpl);
       if (url.pathname === '/admin/gmail/start') return await gmailStart(url, env);
       if (url.pathname === '/admin/gmail/callback') return await gmailCallback(url, env, fetchImpl);
-      if (url.pathname === '/') return page('Relay Accounts', 'Sign-in and email codes for <a href="https://github.com/viaanshetty3-debug/relay-whatsapp-mcp">Relay</a>, the open-source WhatsApp bridge. Nothing to do here: open your Relay dashboard.');
+      if (url.pathname === '/privacy') return page('Relay Accounts privacy policy', PRIVACY);
+      if (url.pathname === '/terms') return page('Relay Accounts terms', TERMS);
+      if (url.pathname === '/') return page('Relay Accounts', 'Sign-in and email codes for <a href="https://github.com/viaanshetty3-debug/relay-whatsapp-mcp">Relay</a>, the open-source WhatsApp bridge. Nothing to do here: open your Relay dashboard.<br><br><a href="/privacy">Privacy policy</a> · <a href="/terms">Terms</a>');
       return json({ error: 'Not found' }, 404);
     } catch (error) {
       console.error('Unexpected error:', String(error?.message || error).slice(0, 200));
