@@ -230,6 +230,27 @@ test('gemini: used first when the key is set; key only in a header; falls back t
   } finally { globalThis.fetch = docsFetch; }
 });
 
+test('gemini via Vertex AI when VERTEX_PROJECT is set', async () => {
+  const docsFetch = globalThis.fetch;
+  const seen = [];
+  globalThis.fetch = async (url, init = {}) => {
+    const u = String(url);
+    if (!u.includes('googleapis.com')) return docsFetch(url, init);
+    seen.push({ url: u, key: init.headers?.['x-goog-api-key'] });
+    const enc = new TextEncoder();
+    return new Response(new ReadableStream({ start(c) { c.enqueue(enc.encode('data: {"candidates":[{"content":{"parts":[{"text":"Port 8787."}]}}]}\n\n')); c.close(); } }), { headers: { 'Content-Type': 'text/event-stream' } });
+  };
+  try {
+    const env = makeEnv({ GEMINI_API_KEY: 'vertex-key', VERTEX_PROJECT: 'my-proj' });
+    const res = await ask(env, question('port?'));
+    assert.equal(res.headers.get('X-Relay-Engine'), 'gemini');
+    assert.equal(await answerText(res), 'Port 8787.');
+    assert.equal(seen.length, 1, 'no model-list call on Vertex');
+    assert.equal(seen[0].url, 'https://aiplatform.googleapis.com/v1/projects/my-proj/locations/global/publishers/google/models/gemini-2.5-flash-lite:streamGenerateContent?alt=sse');
+    assert.equal(seen[0].key, 'vertex-key');
+  } finally { globalThis.fetch = docsFetch; }
+});
+
 test('claude: used after Gemini fails, before Workers AI; falls back when credits run out', async () => {
   const docsFetch = globalThis.fetch;
   const seen = [];

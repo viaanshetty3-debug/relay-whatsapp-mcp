@@ -223,6 +223,7 @@ const isQuotaError = error => /4006|neurons|daily free allocation|quota/i.test(S
 // ---------- Gemini (optional, used first when GEMINI_API_KEY is set) ----------
 
 const GEMINI = 'https://generativelanguage.googleapis.com/v1beta';
+export const VERTEX_DEFAULT_MODEL = 'gemini-2.5-flash-lite';
 let geminiModelCache = null; // { name, at }
 
 // Picks Google's cheapest current model family (Flash-Lite) from the models this key can use:
@@ -273,8 +274,16 @@ function geminiToEvents(body) {
 }
 
 async function askGemini(env, system, messages) {
-  const model = await geminiModel(env);
-  const res = await fetch(`${GEMINI}/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`, {
+  // VERTEX_PROJECT set → Vertex AI, billed to the Google Cloud billing account (where Google Cloud
+  // and AI Pro credits apply). Otherwise the Gemini API (AI Studio), which may need a prepaid balance.
+  const vertex = Boolean(env.VERTEX_PROJECT);
+  const model = vertex ? (env.GEMINI_MODEL || VERTEX_DEFAULT_MODEL) : await geminiModel(env);
+  const loc = env.VERTEX_LOCATION || 'global';
+  const host = loc === 'global' ? 'aiplatform.googleapis.com' : `${loc}-aiplatform.googleapis.com`;
+  const endpoint = vertex
+    ? `https://${host}/v1/projects/${encodeURIComponent(env.VERTEX_PROJECT)}/locations/${loc}/publishers/google/models/${encodeURIComponent(model)}`
+    : `${GEMINI}/models/${encodeURIComponent(model)}`;
+  const res = await fetch(`${endpoint}:streamGenerateContent?alt=sse`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
     body: JSON.stringify({
@@ -283,7 +292,7 @@ async function askGemini(env, system, messages) {
       generationConfig: { temperature: 0.2, maxOutputTokens: 800 },
     }),
   });
-  if (!res.ok || !res.body) throw new Error(`Gemini ${model}: HTTP ${res.status}`);
+  if (!res.ok || !res.body) throw new Error(`Gemini ${vertex ? 'Vertex ' : ''}${model}: HTTP ${res.status} ${(await res.text()).slice(0, 160).replace(/\s+/g, ' ')}`);
   return geminiToEvents(res.body);
 }
 
