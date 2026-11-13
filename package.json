@@ -57,7 +57,8 @@
     "mcp": "node src/stdio.js",
     "test": "node --test test/*.test.js",
     "lint": "node scripts/lint.mjs",
-    "prepublishOnly": "npm run lint && npm test"
+    "prepublishOnly": "npm run lint && npm test",
+    "connect": "node scripts/connect.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",

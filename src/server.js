@@ -7,6 +7,7 @@ import { mountAccounts } from './accounts.js';
 import { mcpServer } from './tools.js';
 import { Profiles, ProfileRouter } from './profiles.js';
 import { root } from './config.js';
+import { localServerEntry, addToClaudeDesktop, addToClaudeCode } from './clients.js';
 
 export function createApp(bridgeOrProfiles,config) {
   const profiles=bridgeOrProfiles instanceof Profiles?bridgeOrProfiles:new Profiles(config,bridgeOrProfiles);
@@ -37,7 +38,7 @@ export function createApp(bridgeOrProfiles,config) {
   const auth=mountOAuth(app,config,bridge.store,accounts);
   const owner=(q,r,next)=>auth(q,r,()=>q.owner?next():r.status(403).json({error:'Owner token required'}));
   app.use('/api',owner,express.json({limit:'24mb'}));
-  app.get('/api/state',(q,r)=>{const b=pick(q);r.json({ ...b.wa.status(),qr:b.wa.qr,cursor:b.store.cursor(),profiles:profiles.list(),readOnly:config.readOnly,base:config.base,remote:remoteSummary(),localConfig:{mcpServers:{whatsapp:{command:process.execPath,args:[resolve(root,'src/stdio.js')],env:{DATA_DIR:config.dir,...(process.env.LD_LIBRARY_PATH?{LD_LIBRARY_PATH:process.env.LD_LIBRARY_PATH}:{})}}}},tools:router.definitions.map(t=>({name:t.name,description:t.description,write:t.write})),allowedChats:[...config.allowed]});});
+  app.get('/api/state',(q,r)=>{const b=pick(q);r.json({ ...b.wa.status(),qr:b.wa.qr,cursor:b.store.cursor(),profiles:profiles.list(),readOnly:config.readOnly,base:config.base,remote:remoteSummary(),localConfig:{mcpServers:{whatsapp:localServerEntry(config)}},localApps:!config.production,tools:router.definitions.map(t=>({name:t.name,description:t.description,write:t.write})),allowedChats:[...config.allowed]});});
   app.get('/api/profiles',(_q,r)=>r.json(profiles.list()));
   app.post('/api/profiles',(q,r)=>r.status(201).json(profiles.create(q.body?.name)));
   app.post('/api/profiles/:id/rename',(q,r)=>r.json(profiles.rename(q.params.id,q.body?.name)));
@@ -53,6 +54,13 @@ export function createApp(bridgeOrProfiles,config) {
   app.post('/api/clients/:id/revoke',(q,r)=>{
     const clients=bridge.store.kv('oauth:clients') || {};delete clients[q.params.id];bridge.store.kv('oauth:clients',clients);
     const tokens=bridge.store.kv('oauth:tokens') || {};for(const [key,value] of Object.entries(tokens))if(value.clientId===q.params.id)delete tokens[key];bridge.store.kv('oauth:tokens',tokens);r.json({revoked:true});
+  });
+  // One-click setup for AI apps on this same computer (not offered on hosted deployments).
+  app.post('/api/local-apps/:app',(q,r)=>{
+    if(config.production)return r.status(404).json({error:'Not available on a hosted Relay'});
+    if(q.params.app==='claude-desktop')return r.json(addToClaudeDesktop(config));
+    if(q.params.app==='claude-code')return r.json(addToClaudeCode(config));
+    r.status(404).json({error:'Unknown app'});
   });
   app.post('/api/connect',async (q,r)=>r.json(await pick(q).wa.start()));
   app.post('/api/disconnect',async(q,r)=>{await pick(q).wa.stop();r.json({ok:true});});

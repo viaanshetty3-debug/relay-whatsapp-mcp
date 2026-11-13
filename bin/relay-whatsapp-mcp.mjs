@@ -11,9 +11,10 @@ const COMMANDS = {
   demo: ['src/main.js --demo', 'run with sample chats (no WhatsApp account needed)'],
   service: ['scripts/relay-service.mjs', 'run the bridge (and relay agent, if configured) with automatic restarts'],
   autostart: ['scripts/install-autostart.mjs', 'start Relay at login (--dry-run, --uninstall)'],
+  connect: ['scripts/connect.mjs', 'add Relay to Claude Desktop and Claude Code on this computer'],
   doctor: ['scripts/doctor.mjs', 'check the install and say what to fix'],
   agent: ['src/remote-agent.js', 'run only the relay agent'],
-  mcp: ['src/stdio.js', 'stdio MCP server for Claude Desktop / Claude Code (the bridge must be running)'],
+  mcp: ['src/stdio.js', 'stdio MCP server for Claude Desktop / Claude Code (starts the bridge if it isn\'t running)'],
 };
 
 // With no command, start Relay and open it in the browser.

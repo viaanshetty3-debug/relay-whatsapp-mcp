@@ -5,8 +5,11 @@
 ### Added
 - **Encryption at rest.** Messages, chats, contacts, drafts, scheduled messages, your dashboard account and the WhatsApp session files are encrypted with AES-256-GCM, using a per-device key kept in the macOS Keychain, Windows DPAPI or a private key file (Linux, Termux). Phone numbers and group IDs are stored as keyed hashes. Existing data is converted automatically on first start. See SECURITY.md for exactly what this does and doesn't protect.
 - `RELAY_ENCRYPTION=off` and `RELAY_DATA_KEY` settings.
+- **One-click Claude setup.** "Add to Claude Desktop" and "Add to Claude Code" buttons in the dashboard, and `npx relay-whatsapp-mcp connect` in a terminal. No JSON editing; existing Claude settings are kept and backed up.
+- **Relay starts itself.** When Claude Desktop or Claude Code needs Relay and it isn't running, the adapter starts it in the background (`RELAY_AUTOLAUNCH=off` to disable).
 
 ### Changed
+- The local adapter reports Relay's real version (it said 1.1.0).
 - "Transfer WhatsApp from Phone" carries an encrypted session's key and stores it in the Mac's Keychain.
 
 ## 1.1.1 — 2026-11-13

@@ -43,7 +43,7 @@ test('dashboard logs in, renders chats, sends and edits, saves drafts, schedules
   await until(()=>store.jobs().length===1,'Scheduling failed');click('[data-view="scheduled"]');await until(()=>$('#scheduled-list').textContent.includes('My draft'),'Schedule list failed');
   click('[data-cancel]');await until(()=>store.jobs()[0].status==='cancelled','Cancel failed');
   click('[data-view="inbox"]');w.prompt=()=>'Edited from the dashboard';click('#global-search');await until(()=>!$('#search-results').hidden&&$('#search-results').textContent.includes('Edited from the dashboard'),'Search failed');
-  click('[data-view="connections"]');assert.match($('#claude-config').textContent,/[\\/]+src[\\/]+stdio\.js/);assert.ok($('#mcp-url').textContent.endsWith('/mcp'));
+  click('[data-view="connections"]');assert.match($('#claude-config').textContent,/[\\/]+bin[\\/]+relay-whatsapp-mcp\.mjs/);assert.ok($('#mcp-url').textContent.endsWith('/mcp'));
   click('[data-view="tools"]');assert.equal(d.querySelectorAll('.tool-card').length,38);click('#run-tool');await until(()=>$('#tool-result').textContent.includes('connected'),'Tool runner failed');
   assert.deepEqual(errors,[]);
   click('#logout');assert.equal($('#workspace').hidden,true);assert.equal(w.sessionStorage.getItem('relay-token'),null);

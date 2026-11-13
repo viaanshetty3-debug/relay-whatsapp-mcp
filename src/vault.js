@@ -72,7 +72,6 @@ export const stores = {
 export const defaultMethod = (platform = process.platform) => platform === 'darwin' ? 'keychain' : platform === 'win32' ? 'dpapi' : 'file';
 
 const CHECK = 'relay-vault-check';
-function writeMeta(file, meta) { const tmp = file + '.tmp'; writeFileSync(tmp, JSON.stringify(meta, null, 2) + '\n', { mode: 0o600 }); renameSync(tmp, file); }
 
 // Opens (or, the first time, creates) the key for a data folder. Never creates a new key
 // over an existing vault: losing the key must be a loud error, not silent data loss.
@@ -111,7 +110,9 @@ export function openVault(dir, { env = process.env, platform = process.platform,
     const back = (store || stores[meta.method]).get(meta.keyId, meta);
     if (!back.equals(key)) throw new Error('The system key store returned a different key');
   }
-  writeMeta(metaFile, meta);
+  // Exclusive create: if another Relay process made the vault first, use theirs instead.
+  try { writeFileSync(metaFile, JSON.stringify(meta, null, 2) + '\n', { mode: 0o600, flag: 'wx' }); }
+  catch (e) { if (e.code === 'EEXIST') return openVault(dir, { env, platform, store }); throw e; }
   return vault;
 }
 

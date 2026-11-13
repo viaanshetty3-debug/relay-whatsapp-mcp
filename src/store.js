@@ -22,6 +22,9 @@ export class Store extends EventEmitter {
     this.setMaxListeners(0);
     this.vault = vault;
     this.db = new DatabaseSync(filename);
+    try { this.init(vault); } catch (e) { this.db.close(); throw e; }
+  }
+  init(vault) {
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS chats(id TEXT PRIMARY KEY, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS contacts(id TEXT PRIMARY KEY, data TEXT NOT NULL);
@@ -34,7 +37,8 @@ export class Store extends EventEmitter {
       CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);`);
     const cols = new Set(this.db.prepare('PRAGMA table_info(messages)').all().map(c => c.name));
     if (!cols.has('kind')) {
-      this.db.exec(`ALTER TABLE messages ADD COLUMN kind TEXT; ALTER TABLE messages ADD COLUMN fromMe INTEGER; ALTER TABLE messages ADD COLUMN deleted INTEGER;`);
+      for (const col of ['kind TEXT', 'fromMe INTEGER', 'deleted INTEGER'])
+        try { this.db.exec(`ALTER TABLE messages ADD COLUMN ${col}`); } catch (e) { if (!/duplicate column/i.test(e.message)) throw e; }
       this.db.exec(`UPDATE messages SET kind=json_extract(data,'$.kind'), fromMe=COALESCE(json_extract(data,'$.fromMe'),0), deleted=COALESCE(json_extract(data,'$.deleted'),0) WHERE data NOT LIKE 'rv1:%'`);
     }
     this.encrypted = this.meta('encryption') === 'v1';
@@ -43,7 +47,11 @@ export class Store extends EventEmitter {
       try { vault.open(this.meta('check'), 'store'); }
       catch { throw new Error("This database was encrypted with a different key, so Relay stopped instead of touching it."); }
     }
-    if (vault && !this.encrypted) this.encrypt();
+    if (vault && !this.encrypted) {
+      this.encrypt();
+      try { vault.open(this.meta('check'), 'store'); }
+      catch { throw new Error("This database was encrypted with a different key, so Relay stopped instead of touching it."); }
+    }
     // An interrupted send may have reached WhatsApp. Never automatically resend it.
     this.db.prepare("UPDATE jobs SET status='uncertain' WHERE status='sending'").run();
   }
@@ -60,7 +68,18 @@ export class Store extends EventEmitter {
   // so the old plain text doesn't linger in free pages or the write-ahead log.
   encrypt() {
     const v = this.vault, plain = t => JSON.parse(t);
-    this.transaction(() => {
+    // IMMEDIATE takes the write lock first, so two Relays starting together can't both convert.
+    this.db.exec('BEGIN IMMEDIATE'); this.inTransaction = true;
+    try {
+      if (this.meta('encryption') === 'v1') { this.db.exec('COMMIT'); this.encrypted = true; return; }
+      this.encryptRows(v, plain);
+      this.db.exec('COMMIT');
+    } catch (e) { this.db.exec('ROLLBACK'); throw e; }
+    finally { this.inTransaction = false; }
+    this.encrypted = true;
+    this.db.exec('PRAGMA wal_checkpoint(TRUNCATE); VACUUM; PRAGMA wal_checkpoint(TRUNCATE);');
+  }
+  encryptRows(v, plain) {
       for (const table of ['chats', 'contacts']) {
         const rows = this.db.prepare(`SELECT data FROM ${table}`).all();
         this.db.prepare(`DELETE FROM ${table}`).run();
@@ -81,9 +100,6 @@ export class Store extends EventEmitter {
       for (const r of kv) this.db.prepare('INSERT INTO kv VALUES(?,?)').run(v.hash('kv:' + r.key), this.seal(plain(r.data), 'kv'));
       this.meta('check', v.seal('relay-store', 'store'));
       this.meta('encryption', 'v1');
-    });
-    this.encrypted = true;
-    this.db.exec('PRAGMA wal_checkpoint(TRUNCATE); VACUUM; PRAGMA wal_checkpoint(TRUNCATE);');
   }
 
   transaction(fn) {

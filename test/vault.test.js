@@ -97,8 +97,8 @@ test('an existing plain database is encrypted in place: nothing readable left, e
 
 test('hidden-ID merges, edits and calls work the same on an encrypted database', async t => {
   const lib = await import('@whiskeysockets/baileys');
-  const dir = tmp(t), store = new Store(join(dir, 'bridge.sqlite'), { vault: new Vault(randomBytes(32)) });
-  t.after(() => store.close());
+  const dir = mkdtempSync(join(tmpdir(), 'relay-vault-')), store = new Store(join(dir, 'bridge.sqlite'), { vault: new Vault(randomBytes(32)) });
+  t.after(() => { store.close(); rmSync(dir, { recursive: true, force: true }); });
   const config = { allowed: new Set(), readOnly: false, demo: false, dir };
   const wa = new WhatsApp(store, config, lib); wa.BufferJSON = lib.BufferJSON; wa.sock = { user: { id: '6589999999@s.whatsapp.net' } };
   const bridge = new Bridge(store, wa, config);

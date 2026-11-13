@@ -306,7 +306,15 @@ function renderIntegrations(){
   $('#remote-setup-link').hidden=!state.remote?.published;
   if(state.remote?.published){$('#remote-instructions').textContent='Your private HTTPS relay is live. Open account setup to use the installed ChatGPT plugin and add Claude’s custom web connector.';$('#remote-note').textContent='This is Claude’s MCP address. ChatGPT uses the private Relay plugin. Keep the Mac awake and online.';}
   $('#claude-config').textContent=JSON.stringify(state.localConfig,null,2);
+  $('#local-apps').hidden=!state.localApps;
 }
+async function addLocalApp(app){
+  const r=await api('/api/local-apps/'+app,{}),out=$('#local-apps-result');out.hidden=false;
+  if(app==='claude-desktop')out.textContent=r.changed?`Added. Quit and reopen Claude Desktop, then ask it about your WhatsApp.${r.backup?' Your previous Claude settings were saved next to the file.':''}`:'Claude Desktop is already set up.';
+  else out.textContent=!r.installed?'Claude Code isn’t installed on this computer.':r.added?'Added to Claude Code. Start claude and ask about your WhatsApp.':'Claude Code reported a problem: '+(r.error||'unknown');
+}
+$('#add-claude-desktop').onclick=guarded(()=>addLocalApp('claude-desktop'));
+$('#add-claude-code').onclick=guarded(()=>addLocalApp('claude-code'));
 $('.copy-config').onclick=guarded(async()=>{await navigator.clipboard.writeText($('#claude-config').textContent);toast('Local MCP configuration copied.');});
 $('#copy-url').onclick=guarded(async()=>{await navigator.clipboard.writeText($('#mcp-url').textContent);toast('MCP URL copied');});
 const samples={get_messages:()=>({chat:selected||chats[0]?.id||'15551234567@s.whatsapp.net'}),send_message:()=>({chat:selected||chats[0]?.id||'15551234567@s.whatsapp.net',text:'Hello!'}),search_messages:()=>({query:'meeting'}),wait_updates:()=>({after:state.cursor||0,timeoutSeconds:5}),list_chats:()=>({}),status:()=>({})};

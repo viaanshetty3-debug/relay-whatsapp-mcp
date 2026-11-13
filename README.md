@@ -31,17 +31,20 @@ Needs [Node.js 22.13+](https://nodejs.org). Nothing to clone:
 npx relay-whatsapp-mcp
 ```
 
-Your browser opens <http://127.0.0.1:8787>. Create your account (Google, GitHub, or email), click **Connect WhatsApp**, and scan the QR code from **WhatsApp → Settings → Linked devices**. Leave the command running. Then connect Claude Code on the same computer:
+Your browser opens <http://127.0.0.1:8787>. Create your account (Google, GitHub, or email), click **Connect WhatsApp**, and scan the QR code from **WhatsApp → Settings → Linked devices**. Then open **Connections** and click **Add to Claude Desktop** (or **Add to Claude Code**), and restart Claude. That's it: from then on Claude starts Relay by itself when it needs it. The same from a terminal:
 
 ```bash
-claude mcp add whatsapp -- npx -y relay-whatsapp-mcp mcp
+npx relay-whatsapp-mcp connect
 ```
 
-For Claude Desktop, add this to `claude_desktop_config.json` and restart it:
+<details><summary>Prefer to set it up by hand?</summary>
+
+Claude Code: `claude mcp add whatsapp -- npx -y relay-whatsapp-mcp mcp`. Claude Desktop, in `claude_desktop_config.json`:
 
 ```json
 { "mcpServers": { "whatsapp": { "command": "npx", "args": ["-y", "relay-whatsapp-mcp", "mcp"] } } }
 ```
+</details>
 
 Try it without a WhatsApp account first: `npx relay-whatsapp-mcp demo` (sample chats). `npx relay-whatsapp-mcp doctor` checks everything; `help` lists all commands. Your private files (`.env`, the WhatsApp session, data) live in `~/.relay-whatsapp-mcp`, never inside npm's folders; set `RELAY_HOME` to change that. If Claude Desktop reports that `npx` was not found, put the full path from `which npx` (`where npx` on Windows) in `"command"`. To run Relay at login, install it permanently with `npm install -g relay-whatsapp-mcp`, then run `relay-whatsapp-mcp autostart`. The optional Cloudflare relay (Claude on your phone, failover) is deployed from a clone: see the [5-minute quickstart](#5-minute-quickstart).
 
