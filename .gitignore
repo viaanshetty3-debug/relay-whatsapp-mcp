@@ -32,7 +32,7 @@ logs/
 CONTINUE-ON-MAC.md
 
 # Dependencies, builds, caches
-node_modules/
+node_modules
 dist/
 .next/
 .wrangler/

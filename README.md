@@ -9,6 +9,9 @@
 [![MCP tools](https://img.shields.io/badge/MCP%20tools-37-8A2BE2.svg)](#tool-reference)
 [![Security policy](https://img.shields.io/badge/security-policy-green.svg)](SECURITY.md)
 
+<p align="center"><img src="docs/failover-demo.gif" alt="Terminal recording: a client lists WhatsApp chats; the primary bridge is frozen like a closed laptop lid; the standby takes over 5.3 s later and answers in 5.8 s; a message is sent once with zero duplicates; the primary comes back." width="760"></p>
+<p align="center"><sub>A real run on Cloudflare's free plan with two demo bridges (fake chats), replayed from the recorded terminal output; the waiting part is sped up 2×. The client calls Relay through the same doorway Claude uses.</sub></p>
+
 Relay links your own WhatsApp account as a **linked device** (like WhatsApp Web) on a computer you control and exposes it to AI assistants through the [Model Context Protocol](https://modelcontextprotocol.io). Ask Claude to summarise a group chat, find the address a friend sent last month, transcribe a voice note, or draft and send a reply. It acts only when you ask it to.
 
 ```
@@ -44,8 +47,8 @@ You don't need the hosted part: a single bridge with Claude Desktop or Claude Co
 ### 37 WhatsApp tools, not just "send a message"
 Read and search history, follow live events with a durable cursor, download and **analyse attachments up to 500 MB** (local transcription, PDF/OCR, video frames, optional local vision), send and reply, edit, delete, react, forward, polls, drafts, scheduled messages, groups and presence. [Full reference ↓](#tool-reference)
 
-### About 4-second failover that never sends twice
-- Run an optional **standby** bridge on a second computer. If the primary sleeps or loses its connection, the standby starts serving after about **4–5 seconds** of silence (about 7 s with the free-tier setting), then steps back when the primary returns.
+### Failover in about 4–6 seconds, never sending twice
+- Run an optional **standby** bridge on a second computer. If the primary sleeps or loses its connection, the standby starts serving after about **4–6 seconds** of silence (about 7–9 s with the free-tier setting), then steps back when the primary returns.
 - **Reads in progress are handed over.** If a device goes silent in the middle of a read-only request, the relay re-queues that request for the other device.
 - **Writes are never re-queued or retried automatically** (send, edit, delete, react, groups and so on). Each queued request is claimed by exactly one device (an atomic `UPDATE … WHERE status='queued'`). A write that times out is reported as *may have executed*, with an instruction to check the chat instead of retrying. `send_message` also accepts a `requestId`, so a retry with the same ID is de-duplicated, and an interrupted scheduled send is marked *uncertain* rather than re-sent.
 
@@ -144,7 +147,7 @@ Cloudflare's free plan currently allows **100,000 Worker requests** and **100,00
 | --- | --- | --- |
 | One bridge, idle | ~37,000 (one 2-second long poll at a time) | ✅ |
 | Primary + standby, default `RELAY_WATCH_MS=750` | ~37,000 + ~115,000 | ❌ over the request limit |
-| Primary + standby, `RELAY_WATCH_MS=3000` on the standby | ~37,000 + ~29,000 | ✅ (failover takes ~7 s instead of ~4–5 s) |
+| Primary + standby, `RELAY_WATCH_MS=3000` on the standby | ~37,000 + ~29,000 | ✅ (failover takes ~7–9 s instead of ~4–6 s) |
 
 Each poll also writes about two D1 rows (device liveness), so an always-on primary uses roughly 70% of the free daily writes. Tool calls add a few requests and writes each.
 
@@ -288,7 +291,7 @@ Before release, the full path (a Claude-style MCP client → Cloudflare doorway 
 | `initialize`, `tools/list` | 37 tools |
 | Tool call round trip (`status`, `list_chats`, `send_message`, `search_messages`) | ~0.4–0.8 s each |
 | Same `send_message` `requestId` sent twice | one message |
-| Primary frozen (like a closed laptop lid) | standby answered the next request after **3.97 s** |
+| Primary frozen (like a closed laptop lid) | standby took over after **4.0 s** and **5.3 s** in two runs; a request already claimed by the frozen primary was handed over and answered in 5.8 s |
 | Primary frozen partway through a read (`wait_updates`) | read handed to the standby and answered; the late primary's result was refused (409) |
 | A write after failover | exactly one message |
 | macOS launchd auto-start | starts; a killed bridge restarts in ~2 s; a killed runner is restarted by launchd; uninstall removes everything |
