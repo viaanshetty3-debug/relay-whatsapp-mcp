@@ -1,0 +1,9 @@
+{
+  "name": "relay-docs-ai",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "npx wrangler deploy",
+    "dev": "npx wrangler dev"
+  }
+}

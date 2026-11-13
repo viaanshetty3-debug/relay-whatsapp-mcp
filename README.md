@@ -10,6 +10,8 @@
 [![Security policy](https://img.shields.io/badge/security-policy-green.svg)](SECURITY.md)
 [![npm](https://img.shields.io/npm/v/relay-whatsapp-mcp.svg)](https://www.npmjs.com/package/relay-whatsapp-mcp)
 
+**[💬 Ask Relay AI (Free Live Assistant)](https://relay-docs-ai.viaan-mcp.workers.dev)**: ask questions about setup, failover, the 37 tools or security. No login or key needed; answers come from these docs via Cloudflare Workers AI and can be wrong. The free tier allows about 30 answers a day for all visitors.
+
 ## Quickstart with npx
 
 Needs [Node.js 22.13+](https://nodejs.org). Nothing to clone:
@@ -291,6 +293,7 @@ public/           dashboard (no build step, no external assets)
 scripts/          setup helpers, service runner, auto-start installers (macos/, linux/, windows/)
 relay-worker/     hosted relay: Cloudflare Worker + D1; src/lib/ holds the broker and encrypted queue protocol
 claude-proxy/     Cloudflare Worker "doorway" for claude.ai custom connectors
+docs-ai-worker/   "Relay AI" docs Q&A page on Cloudflare Workers AI (no keys; per-IP limits)
 deploy/           Docker / self-hosting recipes (see deploy/SELF-HOST.md, deploy/HOSTING.md)
 test/             Node test suite (+ Python tests for media and session transfer)
 setup.mjs         `npm run setup`
