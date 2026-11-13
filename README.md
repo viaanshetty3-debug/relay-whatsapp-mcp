@@ -128,7 +128,7 @@ The first time you open the dashboard, you create the bridge's owner account:
 
 1. Enter your **full name, country, phone number** (with its country code) and **email**.
 2. Choose a **strong password**: 12+ characters with upper and lower case, a number and a symbol. It can't contain your name or email, and the form shows each rule as you type.
-3. Relay emails a **5-digit code** to confirm your email. Enter it, and you're in.
+3. Relay emails a **6-digit code** to confirm your email. Enter it, and you're in.
 
 After that you sign in with your email and password, or with **Google, Microsoft, GitHub or Facebook** if they're set up. **Forgot password?** emails a code to reset it.
 

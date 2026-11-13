@@ -50,10 +50,10 @@ test('password and profile rules', () => {
   assert.match(validateProfile({ ...PROFILE, email: 'nope' }).error, /email/);
 });
 
-test('sign up with an emailed 5-digit code, then sign in, reset the password and sign out', async t => {
+test('sign up with an emailed 6-digit code, then sign in, reset the password and sign out', async t => {
   const sent = [];
   const { call } = await start(t, { demo: false, mailer: { send: async m => { sent.push(m); } } });
-  const code = () => sent.at(-1).subject.match(/\d{5}/)[0];
+  const code = () => sent.at(-1).subject.match(/\d{6}/)[0];
 
   assert.equal((await call('/api/state')).status, 401, 'nothing is open before an account exists');
   let r = await call('/auth/status');
@@ -63,9 +63,9 @@ test('sign up with an emailed 5-digit code, then sign in, reset the password and
   assert.equal(r.status, 400); assert.match(r.json.error, /password needs/);
   r = await call('/auth/signup', { body: PROFILE });
   assert.equal(r.status, 200); assert.equal(r.json.verify, true); assert.equal(r.json.demoCode, undefined, 'real codes are only emailed');
-  assert.equal(sent.length, 1); assert.equal(sent[0].to, 'ada@example.com'); assert.match(sent[0].subject, /^Your Relay code: \d{5}$/);
+  assert.equal(sent.length, 1); assert.equal(sent[0].to, 'ada@example.com'); assert.match(sent[0].subject, /^Your Relay code: \d{6}$/);
 
-  const right = code(), wrong = right === '00000' ? '11111' : '00000';
+  const right = code(), wrong = right === '000000' ? '111111' : '000000';
   r = await call('/auth/verify', { body: { email: 'ada@example.com', code: wrong } });
   assert.equal(r.status, 400); assert.match(r.json.error, /not right/);
   r = await call('/auth/verify', { body: { email: 'ada@example.com', code: right } });
@@ -104,13 +104,13 @@ test('wrong codes and passwords are limited', async t => {
   const sent = [];
   const { call } = await start(t, { demo: false, mailer: { send: async m => { sent.push(m); } } });
   await call('/auth/signup', { body: PROFILE });
-  const right = sent[0].subject.match(/\d{5}/)[0], wrong = right === '00000' ? '11111' : '00000';
+  const right = sent[0].subject.match(/\d{6}/)[0], wrong = right === '000000' ? '111111' : '000000';
   for (let i = 0; i < 5; i++) await call('/auth/verify', { body: { email: 'ada@example.com', code: wrong } });
   const r = await call('/auth/verify', { body: { email: 'ada@example.com', code: right } });
   assert.equal(r.status, 400); assert.match(r.json.error, /Too many wrong codes/);
   await sleep(10);
   assert.equal((await call('/auth/resend', { body: { email: 'ada@example.com' } })).status, 200);
-  const fresh = sent.at(-1).subject.match(/\d{5}/)[0];
+  const fresh = sent.at(-1).subject.match(/\d{6}/)[0];
   assert.equal((await call('/auth/verify', { body: { email: 'ada@example.com', code: fresh } })).status, 200);
   for (let i = 0; i < 10; i++) await call('/auth/login', { cookie: false, body: { email: 'ada@example.com', password: 'Nope-Nope-12345' } });
   const locked = await call('/auth/login', { cookie: false, body: { email: 'ada@example.com', password: GOOD } });
@@ -190,7 +190,7 @@ test('an AI client is approved with the signed-in account instead of the token',
   assert.match(r.text, /Sign in to approve/);
   assert.match(r.text, /href="\/\?next=%2Foauth%2Fauthorize%3F/);
   await call('/auth/signup', { body: PROFILE });
-  await call('/auth/verify', { body: { email: 'ada@example.com', code: sent[0].subject.match(/\d{5}/)[0] } });
+  await call('/auth/verify', { body: { email: 'ada@example.com', code: sent[0].subject.match(/\d{6}/)[0] } });
   r = await call('/oauth/authorize?' + q);
   assert.doesNotMatch(r.text, /Owner token/);
   const nonce = r.text.match(/name="nonce" value="([^"]+)"/)[1];
@@ -241,7 +241,7 @@ test('dashboard: create account, verify the demo code, open the workspace, sign 
   await until(() => /don't match/.test($('#login-error').textContent), 'mismatch not caught');
   $('#signup-confirm').value = GOOD; submit('#signup-form');
   await until(() => !$('#auth-verify').hidden, 'verify step not shown');
-  const demo = $('#demo-code').textContent.match(/\d{5}/)[0];
+  const demo = $('#demo-code').textContent.match(/\d{6}/)[0];
   $('#verify-code').value = demo; submit('#verify-form');
   await until(() => !$('#workspace').hidden && d.querySelectorAll('.chat-item').length === 3, 'workspace did not open');
 
@@ -313,6 +313,6 @@ test('sign in through the Relay Accounts service: only a correctly signed, match
   r = await finish(assertion(good(req)));
   assert.equal(r.location, '/'); assert.equal((await call('/api/state')).status, 200);
   await call('/auth/reset/request', { body: { email: 'ada@example.com' } });
-  assert.equal(mails.length, 1); assert.equal(mails[0].to, 'ada@example.com'); assert.equal(mails[0].purpose, 'reset'); assert.match(mails[0].code, /^\d{5}$/);
+  assert.equal(mails.length, 1); assert.equal(mails[0].to, 'ada@example.com'); assert.equal(mails[0].purpose, 'reset'); assert.match(mails[0].code, /^\d{6}$/);
   assert.equal(Object.keys(mails[0]).sort().join(), 'code,purpose,to', 'only the address, code and purpose leave the bridge');
 });

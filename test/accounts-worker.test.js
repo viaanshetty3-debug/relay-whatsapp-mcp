@@ -104,25 +104,25 @@ test('email codes go out through Gmail, with per-address limits and nothing else
   const send = (body, ip = '1.2.3.4') => call(env, '/email/code', { method: 'POST', headers: { 'CF-Connecting-IP': ip }, body: JSON.stringify(body) }, fakeFetch);
 
   assert.equal((await (await call(env, '/health')).json()).email, false);
-  let r = await send({ to: 'ada@example.com', code: '12345' });
+  let r = await send({ to: 'ada@example.com', code: '123456' });
   assert.equal(r.status, 502, 'Gmail not connected yet'); assert.doesNotMatch((await r.json()).error, /ada|12345/);
 
   await env.STORE.get('vault').fetch('https://store/gmail', { method: 'PUT', body: JSON.stringify({ refresh_token: 'refresh-1' }) });
   assert.equal((await (await call(env, '/health')).json()).email, true);
-  assert.equal((await send({ to: 'not-an-email', code: '12345' })).status, 400);
-  assert.equal((await send({ to: 'ada@example.com\r\nBcc: eve@example.com', code: '12345' })).status, 400, 'no header injection');
-  assert.equal((await send({ to: 'ada@example.com', code: 'click http://evil.test' })).status, 400, 'only a 5-digit code, never free text');
+  assert.equal((await send({ to: 'not-an-email', code: '123456' })).status, 400);
+  assert.equal((await send({ to: 'ada@example.com\r\nBcc: eve@example.com', code: '123456' })).status, 400, 'no header injection');
+  assert.equal((await send({ to: 'ada@example.com', code: 'click http://evil.test' })).status, 400, 'only a 6-digit code, never free text');
 
-  r = await send({ to: 'Ada@Example.com', code: '24680', purpose: 'reset' });
+  r = await send({ to: 'Ada@Example.com', code: '246801', purpose: 'reset' });
   assert.equal(r.status, 200);
-  assert.match(sent[0], /^From: Relay <sender@example.com>\r\nTo: ada@example.com\r\nSubject: Your Relay code: 24680/);
+  assert.match(sent[0], /^From: Relay <sender@example.com>\r\nTo: ada@example.com\r\nSubject: Your Relay code: 246801/);
   assert.match(sent[0], /reset your Relay password/);
 
   // The failed attempt above counts too, so 3 more reach the hourly 5.
-  for (let i = 0; i < 3; i++) assert.equal((await send({ to: 'ada@example.com', code: '11111' }, '9.9.9.' + i)).status, 200);
-  r = await send({ to: 'ada@example.com', code: '11111' }, '8.8.8.8');
+  for (let i = 0; i < 3; i++) assert.equal((await send({ to: 'ada@example.com', code: '111111' }, '9.9.9.' + i)).status, 200);
+  r = await send({ to: 'ada@example.com', code: '111111' }, '8.8.8.8');
   assert.equal(r.status, 429, '5 per address per hour, whatever the network'); assert.ok((await r.json()).retryAfter > 0);
-  assert.equal((await send({ to: 'bob@example.com', code: '11111' })).status, 200, 'other addresses are unaffected');
+  assert.equal((await send({ to: 'bob@example.com', code: '111111' })).status, 200, 'other addresses are unaffected');
   assert.equal(sent.length, 5);
 });
 
@@ -130,13 +130,13 @@ test('the daily total and per-network limits hold', async () => {
   const { env } = makeEnv({ DAILY_EMAIL_LIMIT: '3' });
   await env.STORE.get('vault').fetch('https://store/gmail', { method: 'PUT', body: JSON.stringify({ refresh_token: 'r' }) });
   const fakeFetch = async url => String(url).includes('oauth2') ? Response.json({ access_token: 'a' }) : Response.json({ id: 'm' });
-  const send = (to, ip) => call(env, '/email/code', { method: 'POST', headers: { 'CF-Connecting-IP': ip }, body: JSON.stringify({ to, code: '12345' }) }, fakeFetch);
+  const send = (to, ip) => call(env, '/email/code', { method: 'POST', headers: { 'CF-Connecting-IP': ip }, body: JSON.stringify({ to, code: '123456' }) }, fakeFetch);
   for (let i = 0; i < 3; i++) assert.equal((await send(`u${i}@example.com`, '10.0.0.' + i)).status, 200);
   assert.equal((await send('u9@example.com', '10.0.0.9')).status, 429);
 
   const { env: env2 } = makeEnv();
   await env2.STORE.get('vault').fetch('https://store/gmail', { method: 'PUT', body: JSON.stringify({ refresh_token: 'r' }) });
-  const send2 = to => call(env2, '/email/code', { method: 'POST', headers: { 'CF-Connecting-IP': '7.7.7.7' }, body: JSON.stringify({ to, code: '12345' }) }, fakeFetch);
+  const send2 = to => call(env2, '/email/code', { method: 'POST', headers: { 'CF-Connecting-IP': '7.7.7.7' }, body: JSON.stringify({ to, code: '123456' }) }, fakeFetch);
   for (let i = 0; i < 20; i++) assert.equal((await send2(`p${i}@example.com`)).status, 200);
   assert.equal((await send2('p99@example.com')).status, 429, '20 per network per hour');
 });

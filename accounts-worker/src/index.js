@@ -1,7 +1,7 @@
 // Relay Accounts: one shared service for every Relay install, so nobody has to set up email or
 // OAuth apps themselves.
 //
-//  • POST /email/code       sends a 5-digit sign-up / password-reset code from the owner's Gmail
+//  • POST /email/code       sends a 6-digit sign-up / password-reset code from the owner's Gmail
 //                            (Gmail API), with per-recipient, per-network and daily limits.
 //  • GET  /oauth/start      "Sign in with Google / Microsoft / GitHub / Facebook" for a Relay bridge.
 //  • GET  /callback/:p      finishes the provider sign-in and sends the bridge a short-lived,
@@ -125,7 +125,7 @@ async function sendCode(request, env, fetchImpl) {
   let body; try { body = await request.json(); } catch { return json({ error: 'Send JSON.' }, 400); }
   const to = String(body?.to || '').trim().toLowerCase(), code = String(body?.code || ''), purpose = body?.purpose === 'reset' ? 'reset' : 'verify';
   if (to.length > 254 || !/^[^\s@<>,;"]+@[^\s@<>,;"]+\.[^\s@<>,;"]{2,}$/.test(to)) return json({ error: 'Invalid email address.' }, 400);
-  if (!/^\d{5}$/.test(code)) return json({ error: 'Invalid code.' }, 400);
+  if (!/^\d{6}$/.test(code)) return json({ error: 'Invalid code.' }, 400);
   const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
   for (const [name, limits] of [
     ['to:' + await hash(to), [{ name: 'hour', max: 5, ms: HOUR }, { name: 'day', max: 15, ms: DAY }]],
@@ -175,8 +175,10 @@ async function oauthCallback(url, env, provider, fetchImpl) {
       method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
       body: new URLSearchParams({ grant_type: 'authorization_code', code: url.searchParams.get('code'), redirect_uri: `${url.origin}/callback/${provider}`, client_id: p.clientId, client_secret: p.clientSecret }),
     });
-    if (!tokenRes.ok) throw new Error(`token HTTP ${tokenRes.status}`);
-    const profile = await p.profile(await tokenRes.json(), fetchImpl);
+    if (!tokenRes.ok) { const e = await tokenRes.json().catch(() => ({})); throw new Error(`token HTTP ${tokenRes.status} ${String(e.error || '').slice(0, 40)}`); }
+    const tokens = await tokenRes.json();
+    if (tokens.error) throw new Error(`token ${String(tokens.error).slice(0, 40)}`); // GitHub answers errors with HTTP 200
+    const profile = await p.profile(tokens, fetchImpl);
     if (!profile?.id) throw new Error('no account id');
     const assertion = await signAssertion(env, {
       iss: url.origin, aud: state.returnTo, nonce: state.nonce, provider, id: String(profile.id),
@@ -221,7 +223,7 @@ async function gmailCallback(url, env, fetchImpl) {
 
 const REPO = '<a href="https://github.com/viaanshetty3-debug/relay-whatsapp-mcp">Relay</a>';
 const PRIVACY = `Relay Accounts helps people sign in to their own ${REPO} bridge, an open-source WhatsApp bridge that runs on their own computer.<br><br>
-<b>What it handles.</b> When you sign in with Google, Microsoft, GitHub or Facebook, it receives your account ID, name, email address and whether that email is verified, and passes them, signed, straight back to your own Relay bridge. When Relay emails you a code, it receives the email address and the 5-digit code and sends that one email through Gmail.<br><br>
+<b>What it handles.</b> When you sign in with Google, Microsoft, GitHub or Facebook, it receives your account ID, name, email address and whether that email is verified, and passes them, signed, straight back to your own Relay bridge. When Relay emails you a code, it receives the email address and the 6-digit code and sends that one email through Gmail.<br><br>
 <b>What it keeps.</b> No accounts, names, emails or codes are stored. It keeps only rate-limit counters (keyed by a one-way hash of the email address and of the network address), which are deleted daily, and the token for the Gmail account that sends the codes. Your account and password live only on your own bridge; the service never sees your password.<br><br>
 <b>What it never does.</b> It doesn't sell or share data, show ads, track you, or use data from Google or other providers for anything except signing you in. Use of information received from Google APIs adheres to the Google API Services User Data Policy, including the Limited Use requirements.<br><br>
 <b>Questions or removal.</b> Open an issue on the Relay GitHub repository. The source code of this service is public in the repository's accounts-worker folder.`;

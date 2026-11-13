@@ -1,5 +1,5 @@
 // Owner account for the dashboard: sign up with full name, country, phone, email (verified with a
-// 5-digit emailed code) and a strong password, or sign in with Google, Microsoft, GitHub or Facebook.
+// 6-digit emailed code) and a strong password, or sign in with Google, Microsoft, GitHub or Facebook.
 // One bridge serves one WhatsApp account, so it has exactly one owner: sign-up closes once the
 // account exists. The owner token still works for local MCP clients and as a recovery option.
 import { randomBytes, randomInt, scrypt as scryptCb, createHash, createPublicKey, verify as verifySig } from 'node:crypto';
@@ -178,7 +178,7 @@ export function mountAccounts(app, config, store) {
   }
 
   async function sendCode(email, purpose) {
-    const code = String(randomInt(0, 100000)).padStart(5, '0');
+    const code = String(randomInt(0, 1000000)).padStart(6, '0');
     const what = purpose === 'reset' ? 'reset your Relay password' : 'confirm your email for Relay';
     if (mailer) await mailer.send({ to: email, code, purpose, subject: `Your Relay code: ${code}`, text: `Use this code to ${what}: ${code}\n\nIt expires in 10 minutes. If you didn't ask for it, ignore this email.` });
     return code;
@@ -191,7 +191,7 @@ export function mountAccounts(app, config, store) {
   function checkCode(record, code) {
     if (!record || record.expires < Date.now()) return 'That code has expired. Ask for a new one.';
     if (record.tries >= CODE_TRIES) return 'Too many wrong codes. Ask for a new one.';
-    if (!/^\d{5}$/.test(String(code || '')) || !equal(digest(code), record.codeHash)) { record.tries++; return 'That code is not right.'; }
+    if (!/^\d{6}$/.test(String(code || '')) || !equal(digest(code), record.codeHash)) { record.tries++; return 'That code is not right.'; }
     return null;
   }
 
