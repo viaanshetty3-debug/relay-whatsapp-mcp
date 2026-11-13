@@ -26,3 +26,6 @@ DOCS_BASE = "https://raw.githubusercontent.com/viaanshetty3-debug/relay-whatsapp
 # 90-100 neurons (measured), so roughly 100 AI answers/day. After that, and for a network
 # over its hourly limit, the chat answers from a docs search instead (no limit).
 HOURLY_LIMIT_PER_IP = "30"
+# Optional, used first: Google Gemini Flash-Lite. Set the key as a secret (never in this file):
+#   npx wrangler secret put GEMINI_API_KEY
+# The cheapest current Flash-Lite model is picked automatically; set GEMINI_MODEL to override.

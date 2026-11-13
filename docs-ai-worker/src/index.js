@@ -5,6 +5,8 @@
 //   it lives only in their browser (localStorage) and is sent with each question.
 //   This Worker stores no chats and logs no message text.
 // - Answers are grounded in README.md, SECURITY.md and server.json from the repo.
+// - Engines, in order: Google Gemini Flash-Lite (if the GEMINI_API_KEY secret is set),
+//   Cloudflare Workers AI, then a docs search.
 // - Nobody gets a dead end: when the shared free AI allowance is used up, or one network
 //   asks too much in an hour, the chat answers from a search of the docs instead.
 import { PAGE_CSS, PAGE_JS, REPO, renderPage } from './page.js';
@@ -215,6 +217,77 @@ async function checkLimit(request, env) {
 
 const isQuotaError = error => /4006|neurons|daily free allocation|quota/i.test(String(error?.message || error));
 
+// ---------- Gemini (optional, used first when GEMINI_API_KEY is set) ----------
+
+const GEMINI = 'https://generativelanguage.googleapis.com/v1beta';
+let geminiModelCache = null; // { name, at }
+
+// Picks Google's cheapest current model family (Flash-Lite) from the models this key can use:
+// the "-latest" alias if offered, else the newest stable version. GEMINI_MODEL overrides it.
+export function pickFlashLite(names) {
+  const lite = names.filter(n => /flash-lite/.test(n) && !/tts|image|audio|live|embedding/.test(n));
+  if (lite.includes('gemini-flash-lite-latest')) return 'gemini-flash-lite-latest';
+  const version = n => Number((n.match(/gemini-(\d+(?:\.\d+)?)/) || [])[1] || 0);
+  const stable = lite.filter(n => !/preview|exp/.test(n));
+  return (stable.length ? stable : lite).sort((a, b) => version(b) - version(a) || a.length - b.length)[0] || null;
+}
+
+async function geminiModel(env, now = Date.now()) {
+  if (env.GEMINI_MODEL) return env.GEMINI_MODEL;
+  if (geminiModelCache && now - geminiModelCache.at < 6 * HOUR) return geminiModelCache.name;
+  const res = await fetch(`${GEMINI}/models?pageSize=1000`, { headers: { 'x-goog-api-key': env.GEMINI_API_KEY } });
+  if (!res.ok) throw new Error(`Gemini model list: HTTP ${res.status}`);
+  const names = ((await res.json()).models || [])
+    .filter(m => (m.supportedGenerationMethods || []).includes('generateContent'))
+    .map(m => m.name.replace(/^models\//, ''));
+  const name = pickFlashLite(names);
+  if (!name) throw new Error('No Flash-Lite model is available for this key');
+  geminiModelCache = { name, at: now };
+  return name;
+}
+export const resetGeminiCache = () => { geminiModelCache = null; };
+
+// Gemini's server-sent events → the same `data: {"response": "..."}` events Workers AI sends.
+function geminiToEvents(body) {
+  const decoder = new TextDecoder(), encoder = new TextEncoder();
+  let buffer = '';
+  const emit = (line, controller) => {
+    if (!line.startsWith('data:')) return;
+    try {
+      const parts = JSON.parse(line.slice(5)).candidates?.[0]?.content?.parts || [];
+      const text = parts.filter(p => p.text && !p.thought).map(p => p.text).join('');
+      if (text) controller.enqueue(encoder.encode(`data: ${JSON.stringify({ response: text })}\n\n`));
+    } catch { /* partial or keep-alive line */ }
+  };
+  return body.pipeThrough(new TransformStream({
+    transform(chunk, controller) {
+      buffer += decoder.decode(chunk, { stream: true });
+      let n;
+      while ((n = buffer.indexOf('\n')) >= 0) { emit(buffer.slice(0, n).trim(), controller); buffer = buffer.slice(n + 1); }
+    },
+    flush(controller) { emit(buffer.trim(), controller); controller.enqueue(encoder.encode('data: [DONE]\n\n')); },
+  }));
+}
+
+async function askGemini(env, system, messages) {
+  const model = await geminiModel(env);
+  const res = await fetch(`${GEMINI}/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: system }] },
+      contents: messages.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })),
+      generationConfig: { temperature: 0.2, maxOutputTokens: 800 },
+    }),
+  });
+  if (!res.ok || !res.body) throw new Error(`Gemini ${model}: HTTP ${res.status}`);
+  return geminiToEvents(res.body);
+}
+
+const aiResponse = (stream, engine) => new Response(stream, {
+  headers: { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', 'X-Relay-Mode': 'ai', 'X-Relay-Engine': engine, ...SECURITY_HEADERS },
+});
+
 // ---------- chat ----------
 
 async function chat(request, env, url) {
@@ -231,10 +304,15 @@ async function chat(request, env, url) {
   const docs = await loadDocs(env);
   const limit = await checkLimit(request, env);
   if (!limit.ok) return textStream(docsAnswer(question, docs.sections, { kind: 'ratelimit', retryAfter: limit.retryAfter }));
+  const system = systemPrompt(docs.prompt);
+  if (env.GEMINI_API_KEY) {
+    try { return aiResponse(await askGemini(env, system, messages), 'gemini'); }
+    catch (error) { console.error('Gemini error, using Workers AI:', String(error?.message || error).slice(0, 200)); }
+  }
   let stream;
   try {
     stream = await env.AI.run(env.MODEL, {
-      messages: [{ role: 'system', content: systemPrompt(docs.prompt) }, ...messages],
+      messages: [{ role: 'system', content: system }, ...messages],
       stream: true,
       max_tokens: 600,
       temperature: 0.2,
@@ -243,9 +321,7 @@ async function chat(request, env, url) {
     console.error('Workers AI error:', String(error?.message || error).slice(0, 200)); // never logs message text
     return textStream(docsAnswer(question, docs.sections, { kind: isQuotaError(error) ? 'quota' : 'error' }));
   }
-  return new Response(stream, {
-    headers: { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', 'X-Relay-Mode': 'ai', ...SECURITY_HEADERS },
-  });
+  return aiResponse(stream, 'workers-ai');
 }
 
 export default {

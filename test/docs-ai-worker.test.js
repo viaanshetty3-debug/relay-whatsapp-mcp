@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import worker, { RateLimiter, validateMessages, systemPrompt, resetDocsCache, DOC_FILES, parseSections, parseTroubleshooting, searchDocs, docsAnswer, slug } from '../docs-ai-worker/src/index.js';
+import worker, { RateLimiter, validateMessages, systemPrompt, resetDocsCache, DOC_FILES, parseSections, parseTroubleshooting, searchDocs, docsAnswer, slug, pickFlashLite, resetGeminiCache } from '../docs-ai-worker/src/index.js';
 import { PAGE_JS, renderMarkdown, renderPage } from '../docs-ai-worker/src/page.js';
 
 const ORIGIN = 'https://relay-docs-ai.example.workers.dev';
@@ -69,6 +69,7 @@ const realFetch = globalThis.fetch;
 let docFetches = 0;
 test.beforeEach(() => {
   resetDocsCache();
+  resetGeminiCache();
   docFetches = 0;
   globalThis.fetch = async url => {
     docFetches++;
@@ -180,6 +181,53 @@ test('chat never dead-ends: hourly limit and used-up AI quota fall back to docs 
   assert.match(answer, /### Add a standby later \(24\/7\)[\s\S]*#add-a-standby-later-247/);
   const nothing = await answerText(await ask(quota, question('zebra quantum xylophone')));
   assert.match(nothing, /found nothing matching/);
+});
+
+test('gemini: picks the cheapest current Flash-Lite model', () => {
+  assert.equal(pickFlashLite(['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-flash-lite-latest', 'gemini-3-pro']), 'gemini-flash-lite-latest');
+  assert.equal(pickFlashLite(['gemini-2.0-flash-lite', 'gemini-2.5-flash-lite', 'gemini-3.1-flash-lite-preview', 'gemini-2.5-flash-lite-preview-tts']), 'gemini-2.5-flash-lite');
+  assert.equal(pickFlashLite(['gemini-3.1-flash-lite-preview']), 'gemini-3.1-flash-lite-preview');
+  assert.equal(pickFlashLite(['gemini-2.5-pro']), null);
+});
+
+test('gemini: used first when the key is set; key only in a header; falls back to Workers AI', async () => {
+  const docsFetch = globalThis.fetch;
+  const seen = [];
+  let refuse = false;
+  globalThis.fetch = async (url, init = {}) => {
+    const u = String(url);
+    if (!u.startsWith('https://generativelanguage.googleapis.com/')) return docsFetch(url, init);
+    seen.push({ url: u, key: init.headers?.['x-goog-api-key'], body: init.body && JSON.parse(init.body) });
+    if (u.includes('/models?')) return Response.json({ models: [
+      { name: 'models/gemini-2.5-flash', supportedGenerationMethods: ['generateContent'] },
+      { name: 'models/gemini-2.5-flash-lite', supportedGenerationMethods: ['generateContent'] },
+    ] });
+    if (refuse) return Response.json({ error: { message: 'quota' } }, { status: 429 });
+    const enc = new TextEncoder();
+    return new Response(new ReadableStream({ start(c) {
+      c.enqueue(enc.encode('data: {"candidates":[{"content":{"parts":[{"text":"thinking","thought":true},{"text":"Run `npx relay-"}]}}]}\r\n\r\n'));
+      c.enqueue(enc.encode('data: {"candidates":[{"content":{"parts":[{"text":"whatsapp-mcp doctor`."}]}}]}\r\n\r\n'));
+      c.close();
+    } }), { headers: { 'Content-Type': 'text/event-stream' } });
+  };
+  try {
+    const env = makeEnv({ GEMINI_API_KEY: 'test-key-123' });
+    const res = await ask(env, { messages: [{ role: 'user', content: 'Hi' }, { role: 'assistant', content: 'Hello' }, { role: 'user', content: 'How do I check my install?' }] });
+    assert.equal(res.headers.get('X-Relay-Engine'), 'gemini');
+    assert.equal(await answerText(res), 'Run `npx relay-whatsapp-mcp doctor`.', 'thought parts are dropped');
+    const call = seen.find(s => s.url.includes(':streamGenerateContent'));
+    assert.match(call.url, /models\/gemini-2\.5-flash-lite:streamGenerateContent\?alt=sse$/);
+    assert.ok(seen.every(s => s.key === 'test-key-123' && !s.url.includes('test-key-123')), 'key is sent only as a header');
+    assert.deepEqual(call.body.contents.map(c => c.role), ['user', 'model', 'user']);
+    assert.match(call.body.systemInstruction.parts[0].text, /<document name="README\.md">/);
+    assert.equal(env.calls.length, 0, 'Workers AI not used');
+
+    refuse = true;
+    const fallback = await ask(env, question('again'));
+    assert.equal(fallback.headers.get('X-Relay-Engine'), 'workers-ai');
+    assert.equal(env.calls.length, 1);
+    assert.equal(seen.filter(s => s.url.includes('/models?')).length, 1, 'model choice is cached');
+  } finally { globalThis.fetch = docsFetch; }
 });
 
 test('docs search ranks the relevant section first', async () => {
