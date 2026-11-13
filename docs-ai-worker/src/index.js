@@ -5,7 +5,8 @@
 //   it lives only in their browser (localStorage) and is sent with each question.
 //   This Worker stores no chats and logs no message text.
 // - Answers are grounded in README.md, SECURITY.md and server.json from the repo.
-// - Engines, in order: Google Gemini Flash-Lite (if the GEMINI_API_KEY secret is set),
+// - Engines, in order: your own model on Google Colab while its notebook is running (if the
+//   COLAB_KEY secret is set; see colab/), Google Gemini Flash-Lite (if the GEMINI_API_KEY secret is set),
 //   Claude (if the ANTHROPIC_API_KEY secret is set), Cloudflare Workers AI, then a docs search.
 //   Each engine is used until its provider refuses (credits used up, quota, outage); the
 //   next one takes over for that question automatically.
@@ -206,6 +207,52 @@ export class RateLimiter {
   async alarm() { await this.storage.deleteAll(); }
 }
 
+// ---------- your own model on Colab (optional) ----------
+// The notebook in colab/ runs a model on Colab's GPU behind a temporary public address and
+// tells this Worker that address every couple of minutes. Colab sessions end on their own, so
+// the address counts only while it keeps checking in; otherwise the next engine answers.
+export const COLAB_FRESH_MS = 5 * 60 * 1000;
+export class EngineRegistry {
+  constructor(state) { this.storage = state.storage; }
+  async fetch(request) {
+    if (request.method === 'PUT') { await this.storage.put('colab', await request.json()); return Response.json({ ok: true }); }
+    if (request.method === 'DELETE') { await this.storage.delete('colab'); return Response.json({ ok: true }); }
+    return Response.json((await this.storage.get('colab')) || null);
+  }
+}
+const registry = env => env.ENGINES.get(env.ENGINES.idFromName('engines'));
+async function sameSecret(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || !b) return false;
+  const [x, y] = await Promise.all([sha256(a), sha256(b)]);
+  let diff = 0; for (let i = 0; i < x.length; i++) diff |= x.charCodeAt(i) ^ y.charCodeAt(i);
+  return diff === 0;
+}
+async function colabEngine(request, env, url) {
+  if (!env.COLAB_KEY || !env.ENGINES) throw new HttpError(404, 'Not found');
+  if (!(await sameSecret((request.headers.get('Authorization') || '').replace(/^Bearer /, ''), env.COLAB_KEY))) throw new HttpError(401, 'Wrong key.');
+  if (request.method === 'GET') return json(await (await registry(env).fetch('https://engines/colab')).json());
+  if (request.method === 'DELETE') { await registry(env).fetch('https://engines/colab', { method: 'DELETE' }); return json({ ok: true }); }
+  if (request.method !== 'POST') throw new HttpError(405, 'Use POST.', { Allow: 'GET, POST, DELETE' });
+  let body; try { body = await request.json(); } catch { throw new HttpError(400, 'Invalid JSON.'); }
+  let address; try { address = new URL(String(body?.url || '')); } catch { throw new HttpError(400, 'Send the notebook address as url.'); }
+  if (address.protocol !== 'https:' || !/\.trycloudflare\.com$/.test(address.hostname)) throw new HttpError(400, 'Only https://….trycloudflare.com addresses are accepted.');
+  const entry = { url: address.origin, model: String(body?.model || 'unknown').slice(0, 80), seen: Date.now() };
+  await registry(env).fetch('https://engines/colab', { method: 'PUT', body: JSON.stringify(entry) });
+  return json({ ok: true, freshForSeconds: COLAB_FRESH_MS / 1000 });
+}
+async function askColab(env, system, messages, now = Date.now()) {
+  const entry = await (await registry(env).fetch('https://engines/colab')).json();
+  if (!entry?.url || now - entry.seen > COLAB_FRESH_MS) return null;
+  const res = await fetch(entry.url + '/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + env.COLAB_KEY },
+    body: JSON.stringify({ system, messages }),
+    signal: AbortSignal.timeout(Number(env.COLAB_TIMEOUT_MS) || 20000),
+  });
+  if (!res.ok || !res.body) throw new Error(`Colab ${entry.model}: HTTP ${res.status}`);
+  return res.body; // already in the Workers AI event format
+}
+
 async function sha256(text) {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
   return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
@@ -359,6 +406,10 @@ async function chat(request, env, url) {
   const limit = await checkLimit(request, env);
   if (!limit.ok) return textStream(docsAnswer(question, docs.sections, { kind: 'ratelimit', retryAfter: limit.retryAfter }));
   const system = systemPrompt(docs.prompt);
+  if (env.COLAB_KEY && env.ENGINES) {
+    try { const stream = await askColab(env, system, messages); if (stream) return aiResponse(stream, 'colab'); }
+    catch (error) { console.error('Colab error, trying the next engine:', String(error?.message || error).slice(0, 200)); }
+  }
   if (env.GEMINI_API_KEY) {
     try { return aiResponse(await askGemini(env, system, messages), 'gemini'); }
     catch (error) { console.error('Gemini error, trying the next engine:', String(error?.message || error).slice(0, 200)); }
@@ -395,6 +446,7 @@ export default {
         if (url.pathname === '/app.js') return asset(PAGE_JS, 'text/javascript; charset=utf-8', 86400);
         if (url.pathname === '/style.css') return asset(PAGE_CSS, 'text/css; charset=utf-8', 86400);
       }
+      if (url.pathname === '/api/engine/colab') return await colabEngine(request, env, url);
       if (url.pathname === '/api/chat') {
         if (request.method !== 'POST') throw new HttpError(405, 'Use POST.', { Allow: 'POST' });
         return await chat(request, env, url);

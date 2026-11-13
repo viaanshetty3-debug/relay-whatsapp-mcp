@@ -15,9 +15,17 @@ binding = "AI"
 name = "LIMITER"
 class_name = "RateLimiter"
 
+[[durable_objects.bindings]]
+name = "ENGINES"
+class_name = "EngineRegistry"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["RateLimiter"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["EngineRegistry"]
 
 [vars]
 MODEL = "@cf/google/gemma-4-26b-a4b-it"
@@ -32,6 +40,8 @@ VERTEX_PROJECT = "solid-justice-473807-b4"
 # Optional, used first: Google Gemini Flash-Lite. Set the key as a secret (never in this file):
 #   npx wrangler secret put GEMINI_API_KEY
 # The cheapest current Flash-Lite model is picked automatically; set GEMINI_MODEL to override.
+# Optional, used first while its notebook runs: your own model on Google Colab (see colab/README.md).
+#   npx wrangler secret put COLAB_KEY      (a long random password; the notebook asks for the same one)
 # Optional, used after Gemini: Claude. Set the key as a secret:
 #   npx wrangler secret put ANTHROPIC_API_KEY
 # Defaults to claude-opus-5-5 at low effort; set CLAUDE_MODEL (e.g. claude-haiku-5-5) or CLAUDE_EFFORT to override.

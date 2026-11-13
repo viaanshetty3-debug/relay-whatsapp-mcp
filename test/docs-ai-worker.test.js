@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import worker, { RateLimiter, validateMessages, systemPrompt, resetDocsCache, DOC_FILES, parseSections, parseTroubleshooting, searchDocs, docsAnswer, slug, pickFlashLite, resetGeminiCache } from '../docs-ai-worker/src/index.js';
+import worker, { RateLimiter, EngineRegistry, COLAB_FRESH_MS, validateMessages, systemPrompt, resetDocsCache, DOC_FILES, parseSections, parseTroubleshooting, searchDocs, docsAnswer, slug, pickFlashLite, resetGeminiCache } from '../docs-ai-worker/src/index.js';
 import { PAGE_JS, renderMarkdown, renderPage } from '../docs-ai-worker/src/page.js';
 
 const ORIGIN = 'https://relay-docs-ai.example.workers.dev';
@@ -402,4 +402,60 @@ test('browser: sidebar opens and closes, each visitor has a private saved chat, 
   assert.equal(doc.querySelectorAll('.msg').length, 0);
   assert.equal(doc.getElementById('starters').hidden, false);
   window.close();
+});
+
+function enginesNamespace() {
+  const data = new Map();
+  const object = new EngineRegistry({ storage: { get: async k => data.get(k), put: async (k, v) => { data.set(k, structuredClone(v)); }, delete: async k => data.delete(k) } });
+  return { data, idFromName: n => n, get: () => ({ fetch: (url, init) => object.fetch(new Request(url, init)) }) };
+}
+const COLAB_KEY = 'k'.repeat(32);
+const register = (env, body, key = COLAB_KEY, method = 'POST') => worker.fetch(new Request(ORIGIN + '/api/engine/colab', {
+  method, body: body === undefined ? undefined : JSON.stringify(body), headers: { Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' },
+}), env);
+
+test('colab: only the key holder can register, and only a trycloudflare address', async () => {
+  const env = makeEnv({ COLAB_KEY, ENGINES: enginesNamespace() });
+  assert.equal((await register(env, { url: 'https://a-b.trycloudflare.com' }, 'wrong'.repeat(8))).status, 401);
+  assert.equal((await register(env, { url: 'https://evil.example.com' })).status, 400);
+  assert.equal((await register(env, { url: 'http://a-b.trycloudflare.com' })).status, 400);
+  assert.equal((await register(env, { url: 'https://a-b.trycloudflare.com/x', model: 'qwen3.8:27b' })).status, 200);
+  assert.equal((await (await register(env, undefined, COLAB_KEY, 'GET')).json()).url, 'https://a-b.trycloudflare.com');
+  assert.equal((await register(makeEnv(), { url: 'https://a-b.trycloudflare.com' })).status, 404, 'off unless COLAB_KEY is set');
+});
+
+test('colab: answers first while the notebook checks in, and falls back when it stops or fails', async () => {
+  const docsFetch = globalThis.fetch, seen = [];
+  let colabOk = true;
+  globalThis.fetch = async (url, init = {}) => {
+    if (String(url).startsWith('https://a-b.trycloudflare.com')) {
+      seen.push({ url: String(url), auth: new Headers(init.headers).get('Authorization'), body: JSON.parse(init.body) });
+      return colabOk ? new Response(sseStream(['From ', 'Colab.'])) : new Response('down', { status: 502 });
+    }
+    return docsFetch(url, init);
+  };
+  try {
+    const env = makeEnv({ COLAB_KEY, ENGINES: enginesNamespace() });
+    // Not registered yet: the usual engines answer.
+    assert.equal((await ask(env, question('hi'))).headers.get('X-Relay-Engine'), 'workers-ai');
+    await register(env, { url: 'https://a-b.trycloudflare.com', model: 'qwen3.8:27b' });
+    const res = await ask(env, question('How do I add a standby?'));
+    assert.equal(res.headers.get('X-Relay-Engine'), 'colab');
+    assert.equal(await answerText(res), 'From Colab.');
+    assert.equal(seen[0].url, 'https://a-b.trycloudflare.com/chat');
+    assert.equal(seen[0].auth, 'Bearer ' + COLAB_KEY);
+    assert.match(seen[0].body.system, /Relay/);
+    // The notebook's model fails: the next engine answers the same question.
+    colabOk = false;
+    assert.equal((await ask(env, question('again'))).headers.get('X-Relay-Engine'), 'workers-ai');
+    // The notebook stopped checking in (Colab session ended): Colab isn't tried at all.
+    colabOk = true; seen.length = 0;
+    env.ENGINES.data.get('colab').seen -= COLAB_FRESH_MS + 1000;
+    assert.equal((await ask(env, question('later'))).headers.get('X-Relay-Engine'), 'workers-ai');
+    assert.equal(seen.length, 0);
+    // Stopping the notebook's last cell unregisters it.
+    await register(env, { url: 'https://a-b.trycloudflare.com' });
+    await register(env, undefined, COLAB_KEY, 'DELETE');
+    assert.equal((await ask(env, question('after stop'))).headers.get('X-Relay-Engine'), 'workers-ai');
+  } finally { globalThis.fetch = docsFetch; }
 });

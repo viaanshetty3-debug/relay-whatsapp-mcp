@@ -6,6 +6,7 @@
 - **Encryption at rest.** Messages, chats, contacts, drafts, scheduled messages, your dashboard account and the WhatsApp session files are encrypted with AES-256-GCM, using a per-device key kept in the macOS Keychain or a private key file in your user profile (Windows, Linux, Termux). Phone numbers and group IDs are stored as keyed hashes. Existing data is converted automatically on first start. See SECURITY.md for exactly what this does and doesn't protect.
 - `RELAY_ENCRYPTION=off` and `RELAY_DATA_KEY` settings.
 - **One-click Claude setup.** "Add to Claude Desktop" and "Add to Claude Code" buttons in the dashboard, and `npx relay-whatsapp-mcp connect` in a terminal. No JSON editing; existing Claude settings are kept and backed up.
+- **Help page: your own model on Colab.** `colab/Relay_model_on_Colab.ipynb` runs a model (Qwen 3.8 27B by default) on a Colab GPU; while it runs, the help page answers with it first and falls back to Gemini/Cloudflare when the session ends.
 - **Relay starts itself.** When Claude Desktop or Claude Code needs Relay and it isn't running, the adapter starts it in the background (`RELAY_AUTOLAUNCH=off` to disable).
 
 ### Changed
