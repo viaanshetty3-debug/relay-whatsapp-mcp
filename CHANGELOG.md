@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.1.1 — 2026-11-13
+
+### Added
+- **Call logs.** Voice and video calls (missed, declined, answered with their length) appear in the chat and in `get_messages` as `kind: "call"` entries. Calls are captured from the moment you update.
+- **Voice-note summaries.** `analyze_media` has a `summarize` mode (transcribe, then summarize with a local model).
+- **Load older messages** button in the dashboard asks your phone for earlier history.
+
+### Fixed
+- Chats split by WhatsApp's hidden IDs (`@lid`) are merged into one chat under the phone number and contact name; existing split chats are repaired on start.
+- Dates showing "Invalid Date" for some chats.
+- People not in your contacts show as +number instead of a long ID.
+- Edited messages (`secretEncryptedMessage`) are decrypted and applied instead of showing as a separate unreadable message.
+
 ## 1.1.0 — 2026-11-13
 
 ### Added

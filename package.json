@@ -1,6 +1,6 @@
 {
   "name": "relay-whatsapp-mcp",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "WhatsApp as 38 MCP tools for Claude and ChatGPT: a self-hosted bridge with account sign-in, several WhatsApp profiles, optional Cloudflare relay and primary/standby failover",
   "keywords": [
     "mcp",
