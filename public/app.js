@@ -171,7 +171,9 @@ async function selectChat(chat){
 async function refreshMessages(scroll=false){
   if(!selected)return;const chat=selected;const messages=await tool('get_messages',{chat,limit:pageSize});if(selected!==chat)return;
   const container=$('#messages'),nearBottom=container.scrollHeight-container.scrollTop-container.clientHeight<100;
-  let date='';container.innerHTML=(messages.length===pageSize&&pageSize<500?'<button id="load-more" class="load-more">Load earlier messages ↑</button>':'')+messages.reverse().map(m=>{
+  // Top button: more of what's already synced, or (once that's all shown) ask the phone for older history.
+  const more=messages.length===pageSize&&pageSize<500,fromPhone=messages.length&&!more&&!state.demo;
+  let date='';container.innerHTML=(more?'<button id="load-more" class="load-more">Load earlier messages ↑</button>':fromPhone?'<button id="load-older" class="load-more">Load older messages from your phone ↑</button>':'')+messages.reverse().map(m=>{
     const d=new Date(m.timestamp*1000).toLocaleDateString([],{month:'long',day:'numeric',year:'numeric'});let divider='';if(d!==date){date=d;divider=`<div class="date-divider">${escape(d)}</div>`;}
     const actions=m.deleted?'':`<button data-action="reply">Reply</button><button data-action="react">React</button>${m.fromMe?`${['conversation','extendedTextMessage'].includes(m.kind)?'<button data-action="edit">Edit</button>':''}<button data-action="delete">Delete</button>`:''}${m.hasMedia?'<button data-action="view-media">View media</button><button data-action="download">Download</button>':''}`;
     const attachment=m.media&&!m.deleted?`<div class="attachment-label">${escape([m.media.voiceNote?'Voice note':m.media.kind,m.media.filename,m.media.durationSeconds!=null?m.media.durationSeconds+' sec':''].filter(Boolean).join(' · '))}</div>`:'';
@@ -179,6 +181,13 @@ async function refreshMessages(scroll=false){
   }).join('');
   if(!messages.length)container.innerHTML='<div class="empty"><h2>Start the conversation.</h2><p>Only messages synced by WhatsApp appear here.</p></div>';
   if($('#load-more'))$('#load-more').onclick=guarded(async()=>{const old=container.scrollHeight;pageSize=Math.min(500,pageSize+100);await refreshMessages();container.scrollTop=container.scrollHeight-old;});
+  if($('#load-older'))$('#load-older').onclick=guarded(async()=>{
+    const button=$('#load-older');button.disabled=true;button.textContent='Asking your phone for older messages…';
+    await api('/api/history',{chat});const before=messages.length;
+    // They arrive through WhatsApp's history sync, usually within a few seconds (the phone must be online).
+    for(const wait of [2000,4000,8000]){await new Promise(r=>setTimeout(r,wait));if(selected!==chat)return;const n=(await tool('get_messages',{chat,limit:500})).length;if(n>before){pageSize=Math.min(500,Math.max(pageSize,n));const old=container.scrollHeight;await refreshMessages();container.scrollTop=container.scrollHeight-old;return;}}
+    if($('#load-older')){$('#load-older').disabled=false;$('#load-older').textContent='No older messages arrived. Is your phone online? Try again ↑';}
+  });
   if(scroll||nearBottom)container.scrollTop=container.scrollHeight;
 }
 function clearReply(){replyTo=null;editing=null;$('#reply-bar').hidden=true;$('#send').textContent='Send message ↗';}

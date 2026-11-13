@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { publicMessage, mediaInfo, mediaThumbnail, mediaToolResult,MEDIA_LIMIT,INLINE_MEDIA_LIMIT,MEDIA_CHUNK_SIZE } from './media.js';
 import { MediaFiles } from './media-files.js';
+import { toSeconds } from './store.js';
 import { MediaAnalysis } from './media-analysis.js';
 const chat=z.string().min(3).max(150).describe('Exact WhatsApp chat JID from list_chats, or a phone number with country code');
 const id=z.string().min(1).max(200);
@@ -62,7 +63,13 @@ export class Bridge {
   register() {
     const add=this.add.bind(this),s=this.store,w=this.wa;
     add('status','Connection status, live event cursor, counts, and bridge capabilities.',{},()=>({ ...w.status(),readOnly:this.config.readOnly,cursor:s.cursor(),chats:s.list('chats').filter(c=>this.permitted(c.id)).length,tools:this.definitions.length,maxAttachmentBytes:MEDIA_LIMIT,mediaAnalysis:'Local background jobs via analyze_media'}));
-    add('list_chats','List synced chats with names, unread counts, previews and exact chat JIDs.',{query:z.string().default(''),limit,offset},({query,limit,offset})=>s.list('chats').filter(c=>this.permitted(c.id)&&JSON.stringify([c.name,c.id]).toLowerCase().includes(query.toLowerCase())).sort((a,b)=>Number(b.conversationTimestamp||0)-Number(a.conversationTimestamp||0)).slice(offset,offset+limit));
+    add('list_chats','List synced chats with names, unread counts, previews and exact chat JIDs.',{query:z.string().default(''),limit,offset},({query,limit,offset})=>{
+      // Name: your saved contact name first, then the chat's own name (group subject, or the name the person
+      // set on WhatsApp), then their WhatsApp profile name.
+      const contacts=new Map(s.list('contacts').map(c=>[c.id,c]));
+      return s.list('chats').filter(c=>this.permitted(c.id)&&c.id!=='status@broadcast').map(c=>({...c,name:(c.id.endsWith('@g.us')?c.name:contacts.get(c.id)?.name) || c.name || contacts.get(c.id)?.notify || contacts.get(c.id)?.verifiedName,conversationTimestamp:toSeconds(c.conversationTimestamp) || undefined}))
+        .filter(c=>JSON.stringify([c.name,c.id]).toLowerCase().includes(query.toLowerCase())).sort((a,b)=>(b.conversationTimestamp||0)-(a.conversationTimestamp||0)).slice(offset,offset+limit);
+    });
     add('list_contacts','Search synced contact names and WhatsApp IDs.',{query:z.string().default(''),limit,offset},({query,limit,offset})=>s.list('contacts').filter(c=>this.permitted(c.id)&&JSON.stringify(c).toLowerCase().includes(query.toLowerCase())).slice(offset,offset+limit));
     const filters={chat,query:z.string().default(''),before:z.number().int().optional().describe('Unix timestamp in seconds, exclusive'),after:z.number().int().optional().describe('Unix timestamp in seconds, inclusive'),limit,offset,fromMe:z.boolean().optional()};
     add('get_messages','Read synced messages, newest first. Reading does not send read receipts. Paginate using offset or before.',filters,a=>s.messages(a).map(clean));

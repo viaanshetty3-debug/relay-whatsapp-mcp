@@ -56,6 +56,7 @@ export function createApp(bridgeOrProfiles,config) {
   });
   app.post('/api/connect',async (q,r)=>r.json(await pick(q).wa.start()));
   app.post('/api/disconnect',async(q,r)=>{await pick(q).wa.stop();r.json({ok:true});});
+  app.post('/api/history',async(q,r)=>{const b=pick(q);if(!b.wa.loadOlder)return r.status(400).json({error:'Older messages can\'t be loaded in demo mode.'});const chat=String(q.body?.chat||'');b.check(chat);r.json(await b.wa.loadOlder(chat));});
   app.post('/api/pair',async(q,r)=>r.json(await pick(q).wa.pair(String(q.body?.phone || ''))));
   app.post('/api/tools/:name',async(q,r)=>r.json({result:await router.call(q.params.name,q.body || {},typeof q.query.profile==='string'?q.query.profile:undefined)}));
   app.get('/api/media/:fileId',(q,r,next)=>{try{const entry=pick(q).mediaFile(q.params.fileId);if(!entry.complete)throw new Error('Upload is incomplete');r.set('Content-Type',entry.mimeType);r.sendFile(entry.path,error=>{if(error)next(error);});}catch(error){next(error);}});

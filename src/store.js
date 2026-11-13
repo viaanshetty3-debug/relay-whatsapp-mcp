@@ -3,6 +3,11 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { MEDIA_KINDS } from './media.js';
 
+// WhatsApp timestamps can arrive as 64-bit "Long" objects ({low, high}); store plain seconds.
+export function toSeconds(v) {
+  if (v && typeof v === 'object' && 'low' in v) return (v.low >>> 0) + (v.high >>> 0) * 4294967296;
+  const n = Number(v); return Number.isFinite(n) ? n : 0;
+}
 export class Store extends EventEmitter {
   constructor(filename) {
     super();
@@ -29,7 +34,32 @@ export class Store extends EventEmitter {
     if (!['chats','contacts'].includes(table) || !value.id) return;
     const old = this.db.prepare(`SELECT data FROM ${table} WHERE id=?`).get(value.id);
     const merged = { ...(old ? JSON.parse(old.data) : {}), ...value };
+    if (merged.conversationTimestamp !== undefined) merged.conversationTimestamp = toSeconds(merged.conversationTimestamp) || undefined;
     this.db.prepare(`INSERT OR REPLACE INTO ${table}(id,data) VALUES(?,?)`).run(value.id, JSON.stringify(merged));
+  }
+  // WhatsApp sometimes uses a hidden ID ("…@lid") for a person instead of their phone number.
+  // Moves everything stored under one chat ID to another, merging with what's already there.
+  mergeChat(from, to) {
+    if (!from || !to || from === to) return false;
+    return this.transaction(() => {
+      for (const r of this.db.prepare('SELECT data FROM messages WHERE chat=?').all(from)) {
+        const m = { ...JSON.parse(r.data), chat: to };
+        if (!this.getMessage(to, m.id)) this.db.prepare('INSERT INTO messages VALUES(?,?,?,?,?)').run(to, m.id, m.timestamp, m.text, JSON.stringify(m));
+      }
+      this.db.prepare('DELETE FROM messages WHERE chat=?').run(from);
+      this.db.prepare('UPDATE events SET chat=? WHERE chat=?').run(to, from);
+      this.db.prepare('UPDATE drafts SET chat=? WHERE chat=?').run(to, from);
+      const a = this.getChat(from), b = this.getChat(to);
+      if (a) {
+        const ts = c => toSeconds(c?.conversationTimestamp);
+        const newer = ts(a) > ts(b) ? a : b;
+        const merged = { ...a, ...(b || {}), id: to, name: b?.name || a.name, unreadCount: (Number(a.unreadCount) || 0) + (Number(b?.unreadCount) || 0) };
+        if (newer) { merged.conversationTimestamp = ts(newer) || undefined; if (newer.preview !== undefined) merged.preview = newer.preview; }
+        this.db.prepare('INSERT OR REPLACE INTO chats(id,data) VALUES(?,?)').run(to, JSON.stringify(merged));
+        this.db.prepare('DELETE FROM chats WHERE id=?').run(from);
+      }
+      return true;
+    });
   }
   getChat(id) { const row=this.db.prepare('SELECT data FROM chats WHERE id=?').get(id); return row&&JSON.parse(row.data); }
   list(table) {
