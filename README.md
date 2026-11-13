@@ -18,7 +18,7 @@ Needs [Node.js 22.13+](https://nodejs.org). Nothing to clone:
 
 ```bash
 npx relay-whatsapp-mcp setup    # creates keys, prints your Claude configs
-npx relay-whatsapp-mcp start    # open http://127.0.0.1:8787 and scan the QR code with WhatsApp
+npx relay-whatsapp-mcp start    # open http://127.0.0.1:8787, create your account, scan the QR code
 ```
 
 Leave `start` running. Then connect Claude Code on the same computer:
@@ -116,11 +116,27 @@ Then link WhatsApp:
 npm start
 ```
 
-Open <http://127.0.0.1:8787>, choose **Connect WhatsApp**, and on your phone go to **WhatsApp → Settings → Linked devices → Link a device** and scan the QR code. Paste the printed config into your AI client and ask it:
+Open <http://127.0.0.1:8787> and **create your account** (see [Dashboard sign-in](#dashboard-sign-in)). Then choose **Connect WhatsApp**, and on your phone go to **WhatsApp → Settings → Linked devices → Link a device** and scan the QR code. Paste the printed config into your AI client and ask it:
 
 > Check my WhatsApp connection and list my 3 most recent chats. Don't send anything.
 
 To see your configs again later: `npm run setup -- --print`. If anything seems off, run **`npm run doctor`**. In a few seconds it checks Node, your `.env`, the bridge and WhatsApp session, the relay and the Claude doorway, and says what to fix.
+
+### Dashboard sign-in
+
+The first time you open the dashboard, you create the bridge's owner account:
+
+1. Enter your **full name, country, phone number** (with its country code) and **email**.
+2. Choose a **strong password**: 12+ characters with upper and lower case, a number and a symbol. It can't contain your name or email, and the form shows each rule as you type.
+3. Relay emails a **5-digit code** to confirm your email. Enter it, and you're in.
+
+After that you sign in with your email and password, or with **Google, Microsoft, GitHub or Facebook** if they're set up. **Forgot password?** emails a code to reset it.
+
+- **One owner per bridge:** a bridge reads one WhatsApp account, so sign-up closes once the account exists. A local bridge only allows sign-up from the computer it runs on. A hosted bridge (`PUBLIC_URL`) also asks for the owner token once, so a stranger can't claim it first.
+- **Sending codes:** `setup` asks for a Gmail address and a [Google app password](https://myaccount.google.com/apppasswords), which needs 2-Step Verification. It stores them as `SMTP_URL` in `.env`. Any other SMTP server works too. In demo mode, codes are shown on screen.
+- **Sign-in buttons:** create an OAuth app with each provider and add its `*_CLIENT_ID` and `*_CLIENT_SECRET` to `.env`. Use the redirect URL `http://localhost:8787/auth/callback/<google|microsoft|github|facebook>`, or your `PUBLIC_URL` instead of `http://localhost:8787`. A provider signs you in only if it's linked to the owner account or reports the same verified email. Microsoft emails count as verified only for personal accounts.
+- **Security:** passwords are stored with scrypt. Sessions are HttpOnly cookies that last 30 days, and resetting the password signs out every other session. Ten wrong passwords lock sign-in for 15 minutes, and five wrong codes void a code.
+- **The owner token still exists** for local MCP clients and adapters, and as a recovery sign-in under **Use the owner token instead**. AI clients connecting with OAuth (such as ChatGPT) are approved by the signed-in account.
 
 ### Keep it running
 
@@ -243,7 +259,9 @@ The bridge also exposes the resource `whatsapp://recent` (recent permitted messa
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `HOST` / `PORT` | `127.0.0.1` / `8787` | Where the local bridge listens |
-| `BRIDGE_TOKEN` | generated | Owner token for the dashboard and local MCP (≥ 32 characters) |
+| `BRIDGE_TOKEN` | generated | Owner token for local MCP clients, and a recovery sign-in for the dashboard (≥ 32 characters) |
+| `SMTP_URL` / `MAIL_FROM` | unset | Email server for sign-in codes (`setup` fills these from a Gmail app password) |
+| `GOOGLE_`/`MICROSOFT_`/`GITHUB_`/`FACEBOOK_CLIENT_ID` and `_CLIENT_SECRET` | unset | Optional "Sign in with…" buttons |
 | `AUTO_CONNECT` | `true` with `npm run service` | Reconnect a saved WhatsApp session on start |
 | `READ_ONLY` | `false` | Block every outgoing action, draft change and schedule |
 | `ALLOWED_CHATS` | all chats | Comma-separated chat JIDs the AI may access |

@@ -4,7 +4,7 @@ import {spawnSync} from 'node:child_process';
 import {mkdtempSync,cpSync,readFileSync,existsSync,rmSync,statSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
-import {buildSettings,serializeEnv,parseEnv,clientConfigs,normalizeOrigin,claudeDesktopConfigPath,nodeVersionOk} from '../setup.mjs';
+import {buildSettings,serializeEnv,parseEnv,clientConfigs,normalizeOrigin,claudeDesktopConfigPath,nodeVersionOk,gmailSmtp} from '../setup.mjs';
 import {plan,render,xmlEscape,systemdQuote} from '../scripts/install-autostart.mjs';
 import {nextDelay,relayConfigured} from '../scripts/relay-service.mjs';
 import {RemoteAgent} from '../src/remote-agent.js';
@@ -66,7 +66,7 @@ test('setup: interactive run writes .env and secret files without echoing hidden
   try{
     cpSync(join(repo,'setup.mjs'),join(dir,'setup.mjs'));cpSync(join(repo,'src','paths.js'),join(dir,'src','paths.js'));
     for(const d of ['relay-worker','claude-proxy'])cpSync(join(repo,d,'.gitignore'),join(dir,d,'.gitignore'));
-    const input=['1','https://relay.example.com','https://whatsapp-claude.example.workers.dev',''].join('\n');
+    const input=['1','https://relay.example.com','https://whatsapp-claude.example.workers.dev','',''].join('\n');
     const r=spawnSync(process.execPath,[join(dir,'setup.mjs')],{input,encoding:'utf8'});
     assert.equal(r.status,0,r.stderr);
     const env=parseEnv(readFileSync(join(dir,'.env'),'utf8'));
@@ -87,7 +87,7 @@ test('setup: from an npm install, private files go to ~/.relay-whatsapp-mcp, nev
     const pkg=join(tmp,'node_modules','relay-whatsapp-mcp'),home=join(tmp,'home');
     cpSync(join(repo,'setup.mjs'),join(pkg,'setup.mjs'));cpSync(join(repo,'src','paths.js'),join(pkg,'src','paths.js'));
     const env={...process.env,HOME:home,USERPROFILE:home};delete env.RELAY_HOME;
-    const input=['1','https://relay.example.com','https://whatsapp-claude.example.workers.dev',''].join('\n');
+    const input=['1','https://relay.example.com','https://whatsapp-claude.example.workers.dev','',''].join('\n');
     const r=spawnSync(process.execPath,[join(pkg,'setup.mjs')],{input,encoding:'utf8',env});
     assert.equal(r.status,0,r.stderr);
     const relayHome=join(home,'.relay-whatsapp-mcp');
@@ -146,4 +146,14 @@ test('doctor: flags bad Node versions and incomplete relay settings without prin
   assert.ok(checkEnv(env,true).every(r=>r.status!=='fail'));
   const standby={...env,RELAY_FAILOVER_ROLE:'standby',RELAY_WATCH_MS:'750'};
   assert.equal(checkEnv(standby,true).find(r=>r.name==='RELAY_WATCH_MS').status,'warn');
+});
+
+test('setup: a Gmail app password becomes a private SMTP URL for sign-in codes',()=>{
+  const smtp=gmailSmtp('ada@gmail.com','abcd efgh ijkl mnop');
+  assert.equal(smtp.SMTP_URL,'smtps://ada%40gmail.com:abcdefghijklmnop@smtp.gmail.com:465');
+  assert.equal(smtp.MAIL_FROM,'Relay <ada@gmail.com>');
+  assert.throws(()=>gmailSmtp('ada','abcdefghijklmnop'),/full email/);
+  assert.throws(()=>gmailSmtp('ada@gmail.com','short'),/16 letters/);
+  const text=serializeEnv({HOST:'127.0.0.1',...smtp});
+  assert.match(text,/# Dashboard sign-in/);assert.deepEqual(parseEnv(text).MAIL_FROM,'Relay <ada@gmail.com>');
 });

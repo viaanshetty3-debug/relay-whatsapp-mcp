@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { readFileSync,existsSync } from 'node:fs';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { mountOAuth } from './oauth.js';
+import { mountAccounts } from './accounts.js';
 import { mcpServer } from './tools.js';
 import { root } from './config.js';
 
@@ -19,13 +20,14 @@ export function createApp(bridge,config) {
     if(q.method==='GET' && q.path==='/healthz' && (hosts.has(q.headers.host)||q.headers.host==='healthcheck.railway.app'))return r.json({ok:true});
     if(!hosts.has(q.headers.host))return r.status(403).json({error:'Invalid Host. Set PUBLIC_URL to your public HTTPS origin.'});
     if(q.headers.origin&&!origins.has(q.headers.origin))return r.status(403).json({error:'Origin not allowed'});
-    if(q.path.startsWith('/oauth/') || q.path.startsWith('/api/') || q.path==='/mcp'){
+    if(q.path.startsWith('/oauth/') || q.path.startsWith('/auth/') || q.path.startsWith('/api/') || q.path==='/mcp'){
       const key=q.socket.remoteAddress;let entry=rates.get(key);if(!entry || Date.now()>entry.reset){entry={count:0,reset:Date.now()+60000};rates.set(key,entry);}
       if(++entry.count>600)return r.status(429).json({error:'Too many requests. Retry in a minute.'});
     }
     next();
   });
-  const auth=mountOAuth(app,config,bridge.store);
+  const accounts=mountAccounts(app,config,bridge.store);
+  const auth=mountOAuth(app,config,bridge.store,accounts);
   const owner=(q,r,next)=>auth(q,r,()=>q.owner?next():r.status(403).json({error:'Owner token required'}));
   app.use('/api',owner,express.json({limit:'24mb'}));
   app.get('/api/state',(_q,r)=>r.json({ ...bridge.wa.status(),qr:bridge.wa.qr,cursor:bridge.store.cursor(),readOnly:config.readOnly,base:config.base,remote:remoteSummary(),localConfig:{mcpServers:{whatsapp:{command:process.execPath,args:[resolve(root,'src/stdio.js')],env:{DATA_DIR:config.dir,...(process.env.LD_LIBRARY_PATH?{LD_LIBRARY_PATH:process.env.LD_LIBRARY_PATH}:{})}}}},tools:bridge.definitions.map(t=>({name:t.name,description:t.description,write:t.write})),allowedChats:[...config.allowed]}));

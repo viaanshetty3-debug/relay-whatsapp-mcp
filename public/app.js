@@ -7,12 +7,13 @@ const time=t=>t?new Date(Number(t)*1000).toLocaleTimeString([],{hour:'2-digit',m
 const name=c=>chats.find(x=>x.id===c)?.name || c?.split('@')[0] || 'Conversation';
 function toast(message){$('#toast').textContent=message;$('#toast').hidden=false;clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('#toast').hidden=true,5000);}
 async function api(path,body){
-  const response=await fetch(path,{method:body===undefined?'GET':'POST',headers:{Authorization:'Bearer '+token,...(body!==undefined?{'Content-Type':'application/json'}:{})},body:body!==undefined?JSON.stringify(body):undefined});
+  const response=await fetch(path,{method:body===undefined?'GET':'POST',headers:{...authHeaders(),...(body!==undefined?{'Content-Type':'application/json'}:{})},body:body!==undefined?JSON.stringify(body):undefined});
   const result=await response.json();if(!response.ok){if(response.status===401)lock();throw new Error(result.error || 'Request failed');}return result;
 }
+const authHeaders=()=>token?{Authorization:'Bearer '+token}:{};
 async function tool(name,args={}){return (await api('/api/tools/'+name,args)).result;}
 function guarded(fn){return (...args)=>{if(args[0]?.type==='submit')args[0].preventDefault();return Promise.resolve().then(()=>fn(...args)).catch(e=>toast(e.message));};}
-function lock(){streamAbort?.abort();clearTimeout(refreshTimer);$('#media-dialog').close();clearMedia();token='';sessionStorage.removeItem('relay-token');$('#workspace').hidden=true;$('#login').hidden=false;$('#token').value='';}
+function lock(){streamAbort?.abort();clearTimeout(refreshTimer);$('#media-dialog').close();clearMedia();const hadToken=Boolean(token);token='';sessionStorage.removeItem('relay-token');$('#workspace').hidden=true;$('#login').hidden=false;$('#token').value='';if(!hadToken)fetch('/auth/logout',{method:'POST'}).catch(()=>{});showAuth().catch(()=>{});}
 function paintStatus(){
   const badge=$('#connection-state');badge.textContent=state.state==='connected'?'Connected':state.state==='pairing'?'Ready to pair':state.state==='connecting'?'Connecting…':'Disconnected';badge.classList.toggle('connected',state.state==='connected');
   $('#connect').textContent=state.state==='connected'?'Manage connection ↗':'Connect WhatsApp ↗';$('#demo-badge').hidden=!state.demo;$('#read-only').textContent=state.readOnly?'· Read-only mode':'';
@@ -30,12 +31,65 @@ function paintStatus(){
 }
 async function loadState(){state=await api('/api/state');paintStatus();}
 async function openWorkspace(){
-  await loadState();sessionStorage.setItem('relay-token',token);$('#login').hidden=true;$('#workspace').hidden=false;
+  await loadState();if(token)sessionStorage.setItem('relay-token',token);if(afterLogin())return;$('#login').hidden=true;$('#workspace').hidden=false;
   await refreshChats();renderIntegrations();renderToolCatalog();startEvents();
 }
 $('#login-form').addEventListener('submit',async e=>{e.preventDefault();token=$('#token').value.trim();try{await openWorkspace();}catch(err){$('#login-error').textContent=err.message;}});
 $('#logout').addEventListener('click',lock);
+// ----- account sign-in, sign-up, email code and password reset -----
+const COUNTRIES='AF93 AL355 DZ213 AD376 AO244 AG1 AR54 AM374 AU61 AT43 AZ994 BS1 BH973 BD880 BB1 BY375 BE32 BZ501 BJ229 BT975 BO591 BA387 BW267 BR55 BN673 BG359 BF226 BI257 KH855 CM237 CA1 CV238 CF236 TD235 CL56 CN86 CO57 KM269 CG242 CD243 CR506 CI225 HR385 CU53 CY357 CZ420 DK45 DJ253 DM1 DO1 EC593 EG20 SV503 GQ240 ER291 EE372 SZ268 ET251 FJ679 FI358 FR33 GA241 GM220 GE995 DE49 GH233 GR30 GD1 GT502 GN224 GW245 GY592 HT509 HN504 HK852 HU36 IS354 IN91 ID62 IR98 IQ964 IE353 IL972 IT39 JM1 JP81 JO962 KZ7 KE254 KI686 KW965 KG996 LA856 LV371 LB961 LS266 LR231 LY218 LI423 LT370 LU352 MO853 MG261 MW265 MY60 MV960 ML223 MT356 MH692 MR222 MU230 MX52 FM691 MD373 MC377 MN976 ME382 MA212 MZ258 MM95 NA264 NR674 NP977 NL31 NZ64 NI505 NE227 NG234 KP850 MK389 NO47 OM968 PK92 PW680 PS970 PA507 PG675 PY595 PE51 PH63 PL48 PT351 PR1 QA974 RO40 RU7 RW250 KN1 LC1 VC1 WS685 SM378 ST239 SA966 SN221 RS381 SC248 SL232 SG65 SK421 SI386 SB677 SO252 ZA27 KR82 SS211 ES34 LK94 SD249 SR597 SE46 CH41 SY963 TW886 TJ992 TZ255 TH66 TL670 TG228 TO676 TT1 TN216 TR90 TM993 TV688 UG256 UA380 AE971 GB44 US1 UY598 UZ998 VU678 VA39 VE58 VN84 YE967 ZM260 ZW263'.split(' ').map(x=>({code:x.slice(0,2),dial:x.slice(2)}));
+const PASSWORD_RULES=[['12+ characters',p=>p.length>=12],['a lowercase letter',p=>/[a-z]/.test(p)],['an uppercase letter',p=>/[A-Z]/.test(p)],['a number',p=>/\d/.test(p)],['a symbol',p=>/[^A-Za-z0-9]/.test(p)]];
+let auth={},signupTicket='',pendingEmail='';
+const params=new URLSearchParams(location.search);
+function safeNext(){const n=params.get('next')||'';return n.startsWith('/oauth/authorize?')?n:'';}
+function afterLogin(){const n=safeNext();if(n){location.href=n;return true;}return false;}
+async function authPost(path,body){const r=await fetch('/auth/'+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'Something went wrong.');return j;}
+function panel(name){for(const id of ['signin','signup','verify','reset'])$('#auth-'+id).hidden=id!==name;$('#auth-loading').hidden=true;$('#login-error').textContent='';}
+function paintRules(){const p=$('#signup-password').value;$('#password-rules').innerHTML=PASSWORD_RULES.map(([label,ok])=>`<li class="${ok(p)?'ok':''}">${label}</li>`).join('');}
+function fillCountries(){
+  let names;try{names=new Intl.DisplayNames([navigator.language||'en'],{type:'region'});}catch{names={of:c=>c};}
+  const list=COUNTRIES.map(c=>({...c,name:names.of(c.code)||c.code})).sort((a,b)=>a.name.localeCompare(b.name));
+  $('#signup-country').innerHTML='<option value="">Choose your country</option>'+list.map(c=>`<option value="${c.code}" data-dial="${c.dial}">${escape(c.name)} (+${c.dial})</option>`).join('');
+  const guess=(navigator.language||'').split('-')[1];if(guess&&list.some(c=>c.code===guess))$('#signup-country').value=guess;
+}
+function paintSocial(verb){
+  const html=(auth.providers||[]).map(p=>`<a href="/auth/oauth/${encodeURIComponent(p.id)}"><b>${{google:'G',microsoft:'⊞',github:'⌥',facebook:'f'}[p.id]||'↗'}</b> ${verb} with ${escape(p.name)}</a>`).join('');
+  for(const el of $$('[data-social]')){el.innerHTML=html;el.hidden=!html;}for(const el of $$('[data-social-or]'))el.hidden=!html;
+}
+async function showAuth(){
+  auth=await (await fetch('/auth/status')).json();
+  if(auth.signedIn)return openWorkspace();
+  const ticket=params.get('signup');
+  if(!auth.hasAccount){
+    panel('signup');paintSocial('Sign up');$('#setup-token-label').hidden=!auth.hostedSetup;
+    if(ticket){
+      const r=await fetch('/auth/ticket/'+encodeURIComponent(ticket));const t=await r.json();
+      if(r.ok){signupTicket=ticket;$('#signup-email').value=t.email;$('#signup-email').readOnly=true;if(!$('#signup-name').value)$('#signup-name').value=t.name;$('#signup-note').textContent=`Signed in with ${t.provider}. Add your country, phone number and a password to finish.`;$$('[data-social]').forEach(e=>e.hidden=true);$$('[data-social-or]').forEach(e=>e.hidden=true);}
+      else $('#login-error').textContent=t.error;
+    }
+    if(!auth.emailReady&&!signupTicket)$('#signup-note').textContent='One account owns this bridge. Email sending isn\'t set up yet: run `npx relay-whatsapp-mcp setup` and choose email so Relay can send your code'+((auth.providers||[]).length?', or sign up with an account below.':'.');
+  }else{panel('signin');paintSocial('Continue');}
+  if(params.get('auth_error'))$('#login-error').textContent=params.get('auth_error');
+}
+const run=fn=>async e=>{e.preventDefault();$('#login-error').textContent='';const btn=e.target.querySelector('button');if(btn)btn.disabled=true;try{await fn(e);}catch(err){$('#login-error').textContent=err.message;}finally{if(btn)btn.disabled=false;}};
+$('#signin-form').addEventListener('submit',run(async()=>{await authPost('login',{email:$('#signin-email').value,password:$('#signin-password').value});$('#signin-password').value='';await openWorkspace();}));
+$('#signup-password').addEventListener('input',paintRules);
+$('#signup-country').addEventListener('change',()=>{const dial=$('#signup-country').selectedOptions[0]?.dataset.dial;const ph=$('#signup-phone');if(dial&&(!ph.value||/^\+\d{0,4}\s?$/.test(ph.value)))ph.value='+'+dial+' ';});
+$('#signup-form').addEventListener('submit',run(async()=>{
+  if($('#signup-password').value!==$('#signup-confirm').value)throw new Error('The passwords don\'t match.');
+  const body={fullName:$('#signup-name').value,country:$('#signup-country').value,phone:$('#signup-phone').value,email:$('#signup-email').value,password:$('#signup-password').value,setupToken:$('#signup-setup-token').value||undefined,ticket:signupTicket||undefined};
+  const r=await authPost('signup',body);
+  if(r.signedIn){history.replaceState(null,'',location.pathname+(safeNext()?'?next='+encodeURIComponent(safeNext()):''));return openWorkspace();}
+  pendingEmail=r.email;$('#verify-email').textContent=r.email;$('#demo-code').hidden=!r.demoCode;$('#demo-code').textContent=r.demoCode?`Demo mode: your code is ${r.demoCode}`:'';panel('verify');$('#verify-code').focus();
+}));
+$('#verify-form').addEventListener('submit',run(async()=>{await authPost('verify',{email:pendingEmail,code:$('#verify-code').value.trim(),setupToken:$('#signup-setup-token').value||undefined});$('#signup-password').value=$('#signup-confirm').value='';await openWorkspace();}));
+$('#resend-code').addEventListener('click',()=>authPost('resend',{email:pendingEmail}).then(r=>{if(r.demoCode){$('#demo-code').hidden=false;$('#demo-code').textContent=`Demo mode: your code is ${r.demoCode}`;}toast('A new code is on its way.');}).catch(e=>$('#login-error').textContent=e.message));
+$('#reset-request-form').addEventListener('submit',run(async()=>{const r=await authPost('reset/request',{email:$('#reset-email').value});$('#reset-request-form').hidden=true;$('#reset-confirm-form').hidden=false;$('#reset-demo-code').hidden=!r.demoCode;$('#reset-demo-code').textContent=r.demoCode?`Demo mode: your code is ${r.demoCode}`:'';}));
+$('#reset-confirm-form').addEventListener('submit',run(async()=>{await authPost('reset/confirm',{email:$('#reset-email').value,code:$('#reset-code').value.trim(),password:$('#reset-password').value});$('#reset-password').value='';await openWorkspace();}));
+for(const b of $$('[data-go]'))b.addEventListener('click',()=>{panel(b.dataset.go);if(b.dataset.go==='reset'){$('#reset-request-form').hidden=false;$('#reset-confirm-form').hidden=true;$('#reset-email').value=$('#signin-email').value;}});
+fillCountries();paintRules();
 if(token)openWorkspace().catch(e=>{$('#login-error').textContent=e.message;lock();});
+else showAuth().catch(e=>{$('#auth-loading').hidden=true;$('#login-error').textContent='Could not reach your bridge: '+e.message;});
 async function refreshChats(){chats=await tool('list_chats',{limit:500});$('#chat-count').textContent=chats.length;renderChats();}
 function renderChats(){
   const query=$('#chat-search').value.toLowerCase();const filtered=chats.filter(c=>(!unread||Number(c.unreadCount)>0)&&[c.name,c.id].join(' ').toLowerCase().includes(query));
@@ -107,7 +161,7 @@ $('#file-input').addEventListener('change',guarded(async()=>{
 function download(blob,filename){const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=filename.replace(/[\x00-\x1f/\\]/g,'_');a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 async function mediaBlob(file){
   if(file.base64)return new Blob([Uint8Array.from(atob(file.base64),c=>c.charCodeAt(0))],{type:file.mimeType});
-  const response=await fetch('/api/media/'+encodeURIComponent(file.fileId),{headers:{Authorization:'Bearer '+token}});
+  const response=await fetch('/api/media/'+encodeURIComponent(file.fileId),{headers:authHeaders()});
   if(!response.ok)throw new Error((await response.json()).error||'Attachment download failed');return response.blob();
 }
 function clearMedia(){
@@ -210,7 +264,7 @@ function renderActivity(){
 async function pollEvents(controller,cursor){
   while(!controller.signal.aborted){
     try{
-      const response=await fetch('/api/tools/wait_updates',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({after:cursor,timeoutSeconds:2,limit:100}),signal:controller.signal});
+      const response=await fetch('/api/tools/wait_updates',{method:'POST',headers:{...authHeaders(),'Content-Type':'application/json'},body:JSON.stringify({after:cursor,timeoutSeconds:2,limit:100}),signal:controller.signal});
       if(!response.ok)throw new Error('Live updates unavailable');
       const {result}=await response.json();cursor=result.cursor;
       if(result.events.length){events.push(...result.events);events=events.slice(-40);renderActivity();await refreshChats();if(selected)await refreshMessages();if(view==='scheduled')await renderScheduled();}
@@ -223,7 +277,7 @@ async function startEvents(){
   if(!['localhost','127.0.0.1','[::1]'].includes(location.hostname))return pollEvents(controller,cursor);
   while(!controller.signal.aborted){
     try{
-      const response=await fetch('/api/events?after='+cursor,{headers:{Authorization:'Bearer '+token},signal:controller.signal});if(!response.ok)throw new Error('Live stream unavailable');
+      const response=await fetch('/api/events?after='+cursor,{headers:authHeaders(),signal:controller.signal});if(!response.ok)throw new Error('Live stream unavailable');
       const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='';
       while(true){const {done,value}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});let end;
         while((end=buffer.indexOf('\n\n'))>=0){const frame=buffer.slice(0,end);buffer=buffer.slice(end+2);const data=frame.split('\n').filter(s=>s.startsWith('data: ')).map(s=>s.slice(6)).join('\n');if(!data)continue;

@@ -86,6 +86,7 @@ export function serializeEnv(env) {
     ['# Local bridge', ['HOST', 'PORT', 'AUTO_CONNECT', 'BRIDGE_TOKEN']],
     ['# Remote agent (connects this device to your relay)', ['RELAY_REMOTE_URL', 'RELAY_SITE_KEY', 'RELAY_AGENT_KEY', 'RELAY_AGENT_ID', 'RELAY_DEVICE_ID', 'RELAY_FAILOVER_ROLE', 'RELAY_WATCH_MS']],
     ['# Keys for AI clients (also uploaded to the relay / Claude doorway)', ['RELAY_CLIENT_KEY', 'CLAUDE_DOORWAY_URL', 'CLAUDE_DOORWAY_KEY']],
+    ['# Dashboard sign-in: email for 5-digit codes, and optional sign-in providers', ['SMTP_URL', 'MAIL_FROM', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'MICROSOFT_CLIENT_ID', 'MICROSOFT_CLIENT_SECRET', 'GITHUB_CLIENT_ID', 'GITHUB_CLIENT_SECRET', 'FACEBOOK_CLIENT_ID', 'FACEBOOK_CLIENT_SECRET']],
   ];
   let text = '# Written by `npm run setup`. Keep this file private; never commit it.\n';
   for (const [title, keys] of groups) {
@@ -94,6 +95,14 @@ export function serializeEnv(env) {
     text += '\n' + title + '\n' + present.map(k => `${k}=${quote(env[k])}`).join('\n') + '\n';
   }
   return text;
+}
+
+// Gmail address + app password → an SMTP URL for sending sign-in codes.
+export function gmailSmtp(address, appPassword) {
+  const user = String(address || '').trim(), pass = String(appPassword || '').replace(/\s+/g, '');
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(user)) throw new Error('Enter a full email address');
+  if (pass.length < 16) throw new Error('A Google app password has 16 letters');
+  return { SMTP_URL: `smtps://${encodeURIComponent(user)}:${encodeURIComponent(pass)}@smtp.gmail.com:465`, MAIL_FROM: `Relay <${user}>` };
 }
 
 export function parseEnv(text) {
@@ -245,6 +254,17 @@ async function main() {
     }
 
     const { env, relaySecrets, doorwaySecrets } = buildSettings(answers);
+
+    console.log('\nDashboard sign-in: you create an account on the dashboard, and Relay emails a 5-digit');
+    console.log('code to confirm your email (and to reset your password). Codes are sent from a Gmail account');
+    console.log('using a Google app password: https://myaccount.google.com/apppasswords (needs 2-Step Verification).');
+    const gmail = await ask('Gmail address to send codes from [skip]: ');
+    if (gmail.trim()) {
+      const appPassword = await askUntilValid(ask, 'Google app password (hidden): ', v => gmailSmtp(gmail, v), { secret: true });
+      Object.assign(env, gmailSmtp(gmail, appPassword));
+    } else {
+      console.log('  Skipped. You can still sign up with Google, Microsoft, GitHub or Facebook if you add them (see README).');
+    }
     writePrivate(envPath, serializeEnv(env));
     console.log('\nWrote ' + envPath);
     // The Workers are deployed from a git clone. In a clone the secrets go straight into
@@ -264,7 +284,7 @@ async function main() {
 
     printConfigs(env);
     console.log('\nNext steps:');
-    console.log(`  1. ${command('start')}  → open http://127.0.0.1:8787 and link WhatsApp (QR code)`);
+    console.log(`  1. ${command('start')}  → open http://127.0.0.1:8787, create your account, and link WhatsApp (QR code)`);
     console.log(`  2. ${command('service')}  → bridge${env.RELAY_REMOTE_URL ? ' + relay agent' : ''} with automatic restarts`);
     console.log(`  3. ${command('autostart')}  → start automatically when you log in (macOS, Linux, Windows)`);
     if (isNpxCache()) console.log('     (auto-start needs a permanent install first: npm install -g relay-whatsapp-mcp)');
