@@ -18,11 +18,15 @@
     <string>{{RELAY_DIR}}/scripts/relay-service.mjs</string>
   </array>
   <key>WorkingDirectory</key><string>{{RELAY_DIR}}</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>RELAY_HOME</key><string>{{RELAY_HOME}}</string>
+  </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>10</integer>
   <key>ProcessType</key><string>Background</string>
-  <key>StandardOutPath</key><string>{{RELAY_DIR}}/data/service.log</string>
-  <key>StandardErrorPath</key><string>{{RELAY_DIR}}/data/service.log</string>
+  <key>StandardOutPath</key><string>{{LOG_FILE}}</string>
+  <key>StandardErrorPath</key><string>{{LOG_FILE}}</string>
 </dict>
 </plist>

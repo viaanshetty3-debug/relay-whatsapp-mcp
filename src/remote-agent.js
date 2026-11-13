@@ -3,7 +3,7 @@ import { readFileSync,writeFileSync,existsSync,mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open,seal,parts,REMOTE_MAX_BYTES } from './remote-protocol.js';
-const root=fileURLToPath(new URL('../',import.meta.url));
+import { loadEnv,defaultDataDir } from './paths.js';
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
 // Failover between two devices that are SEPARATE WhatsApp linked devices and
 // share one relay agent ID, so the hosted relay never makes either wait for a
@@ -100,7 +100,7 @@ export class RemoteAgent {
     return this.localProtocolPromise;
   }
   async localRequest(body,_clientProtocol){
-    const token=readFileSync(resolve(this.settings.dataDir||resolve(root,'data'),'owner-token'),'utf8').trim();
+    const token=readFileSync(resolve(this.settings.dataDir||defaultDataDir(),'owner-token'),'utf8').trim();
     const headers={'Content-Type':'application/json',Accept:'application/json, text/event-stream',Authorization:'Bearer '+token};
     // The hosted endpoint and local SDK terminate separate MCP connections.
     // Never forward a newer caller's protocol header to an older local SDK.
@@ -109,7 +109,7 @@ export class RemoteAgent {
   }
   async bridgeStatus(){
     try{
-      const token=readFileSync(resolve(this.settings.dataDir||resolve(root,'data'),'owner-token'),'utf8').trim();
+      const token=readFileSync(resolve(this.settings.dataDir||defaultDataDir(),'owner-token'),'utf8').trim();
       const response=await this.fetch(this.local+'/api/state',{headers:{Authorization:'Bearer '+token},signal:AbortSignal.any([this.abort.signal,AbortSignal.timeout(5000)])});
       if(!response.ok)throw new Error('Unavailable');const state=await response.json();return {state:state.state,tools:state.tools?.length||0};
     }catch{return {state:'disconnected',tools:0};}
@@ -182,14 +182,14 @@ export function settingsFromEnv(env,file){
   return merged;
 }
 async function main(){
-  if(existsSync(resolve(root,'.env')))process.loadEnvFile(resolve(root,'.env'));
-  const path=resolve(root,'data','remote-link.json');let settings;
+  loadEnv();
+  const path=resolve(process.env.DATA_DIR||defaultDataDir(),'remote-link.json');let settings;
   try{settings=JSON.parse(readFileSync(path,'utf8'));}catch{settings=null;}
   settings=settingsFromEnv(process.env,settings);
   if(!settings)throw new Error('Remote access is not configured yet. Set the RELAY_* variables (see .env.example) or finish publishing the private Relay integration first.');
   if(process.env.DATA_DIR)settings={...settings,dataDir:resolve(process.env.DATA_DIR)};
   if(settings.published!==true)throw new Error('The private relay has not been activated after hosted verification yet.');
-  const agent=new RemoteAgent(settings,{log:message=>console.error(new Date().toISOString()+' '+message)});const dataDir=settings.dataDir||resolve(root,'data');mkdirSync(dataDir,{recursive:true,mode:0o700});writeFileSync(resolve(dataDir,'remote-agent.pid'),String(process.pid)+'\n',{mode:0o600});
+  const agent=new RemoteAgent(settings,{log:message=>console.error(new Date().toISOString()+' '+message)});const dataDir=settings.dataDir||defaultDataDir();mkdirSync(dataDir,{recursive:true,mode:0o700});writeFileSync(resolve(dataDir,'remote-agent.pid'),String(process.pid)+'\n',{mode:0o600});
   process.on('SIGINT',()=>agent.stop());process.on('SIGTERM',()=>agent.stop());
   console.error('Relay remote agent started as '+agent.role+'. Your WhatsApp session stays on this device.');await agent.run();
 }

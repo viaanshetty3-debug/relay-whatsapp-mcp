@@ -10,12 +10,14 @@
 // Options:
 //   npm run setup                  interactive setup
 //   npm run setup -- --print       re-print the client configs from an existing .env
+// From npm: `npx relay-whatsapp-mcp setup` (files go to ~/.relay-whatsapp-mcp, see src/paths.js).
 import { randomBytes, randomUUID } from 'node:crypto';
-import { copyFileSync, existsSync, readFileSync, writeFileSync, realpathSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
+import { command, envFile, home, isNpxCache } from './src/paths.js';
 
 export const root = dirname(fileURLToPath(import.meta.url));
 const MIN_NODE = [22, 13];
@@ -114,19 +116,25 @@ export function claudeDesktopConfigPath(platform = process.platform, home = home
 
 // Returns [{title, text}] sections. Secrets are included because the output
 // is meant to be pasted into your own client settings.
-export function clientConfigs(env, { node = process.execPath, dir = root, platform = process.platform } = {}) {
-  const stdio = join(dir, 'src', 'stdio.js');
+// How a local MCP client starts Relay's stdio adapter. Run from the npx cache,
+// the path would disappear when npm clears that cache, so use npx itself.
+export function localLauncher({ node = process.execPath, dir = root, npx = isNpxCache(dir) } = {}) {
+  return npx ? { command: 'npx', args: ['-y', 'relay-whatsapp-mcp', 'mcp'] } : { command: node, args: [join(dir, 'src', 'stdio.js')] };
+}
+
+export function clientConfigs(env, { node = process.execPath, dir = root, platform = process.platform, npx } = {}) {
+  const launch = localLauncher({ node, dir, npx });
   const out = [];
   const desktopPath = claudeDesktopConfigPath(platform);
   out.push({
     title: 'Claude Desktop (this computer, local)',
     text: (desktopPath ? `Merge into ${desktopPath}, then restart Claude Desktop:\n` : 'Claude Desktop is not available on Linux; use Claude Code below.\n') +
-      JSON.stringify({ mcpServers: { whatsapp: { command: node, args: [stdio] } } }, null, 2),
+      JSON.stringify({ mcpServers: { whatsapp: launch } }, null, 2),
   });
   out.push({
     title: 'Claude Code (this computer, local)',
-    text: `Run:\n  claude mcp add whatsapp -- ${JSON.stringify(node)} ${JSON.stringify(stdio)}\nor put this in .mcp.json:\n` +
-      JSON.stringify({ mcpServers: { whatsapp: { type: 'stdio', command: node, args: [stdio] } } }, null, 2),
+    text: `Run:\n  claude mcp add whatsapp -- ${[launch.command, ...launch.args].map(a => JSON.stringify(a)).join(' ')}\nor put this in .mcp.json:\n` +
+      JSON.stringify({ mcpServers: { whatsapp: { type: 'stdio', ...launch } } }, null, 2),
   });
   if (env.CLAUDE_DOORWAY_KEY) {
     const url = env.CLAUDE_DOORWAY_URL ? doorwayMcpUrl(env.CLAUDE_DOORWAY_URL) : 'https://whatsapp-claude.<your-subdomain>.workers.dev/mcp';
@@ -198,19 +206,21 @@ async function main() {
     console.error(`Relay needs Node.js ${MIN_NODE.join('.')} or newer (you have ${process.versions.node}).`);
     process.exit(1);
   }
-  const envPath = resolve(root, '.env');
+  const envPath = envFile;
   if (process.argv.includes('--print')) {
-    if (!existsSync(envPath)) { console.error('No .env yet. Run `npm run setup` first.'); process.exit(1); }
+    if (!existsSync(envPath)) { console.error(`No .env yet. Run \`${command('setup')}\` first.`); process.exit(1); }
     printConfigs(parseEnv(readFileSync(envPath, 'utf8')));
     return;
   }
 
   const { ask, close } = prompter();
   try {
-    console.log('Relay setup. Press Enter to accept [defaults] or skip optional questions.\n');
+    console.log('Relay setup. Press Enter to accept [defaults] or skip optional questions.');
+    console.log(`Private files (.env, data/) go in ${home}\n`);
+    mkdirSync(home, { recursive: true, mode: 0o700 });
     if (existsSync(envPath)) {
       const answer = await ask('A .env already exists. Replace it? It will be backed up first. [y/N] ');
-      if (!/^y/i.test(answer)) { console.log('Nothing changed. To see your client configs: npm run setup -- --print'); return; }
+      if (!/^y/i.test(answer)) { console.log(`Nothing changed. To see your client configs: ${command('setup')}${command('setup').startsWith('npm') ? ' --' : ''} --print`); return; }
       const backup = envPath + '.backup-' + new Date().toISOString().replace(/[:.]/g, '-');
       copyFileSync(envPath, backup);
       console.log('Backed up to ' + backup);
@@ -236,23 +246,29 @@ async function main() {
 
     const { env, relaySecrets, doorwaySecrets } = buildSettings(answers);
     writePrivate(envPath, serializeEnv(env));
-    console.log('\nWrote .env');
+    console.log('\nWrote ' + envPath);
+    // The Workers are deployed from a git clone. In a clone the secrets go straight into
+    // the Worker folders; an npm install has no Worker folders, so they wait in the Relay home.
+    const clone = existsSync(resolve(root, 'relay-worker'));
+    const secretsFile = name => clone ? resolve(root, name, '.secrets.json') : join(home, name + '.secrets.json');
+    const fromNpm = name => clone ? '' : ` (copy it to ${name}/.secrets.json in a clone of https://github.com/viaanshetty3-debug/relay-whatsapp-mcp first)`;
     if (relaySecrets) {
-      writePrivate(resolve(root, 'relay-worker', '.secrets.json'), JSON.stringify(relaySecrets, null, 2) + '\n');
-      console.log('Wrote relay-worker/.secrets.json  → deploy the relay: cd relay-worker && npm run deploy (see its wrangler.toml)');
+      writePrivate(secretsFile('relay-worker'), JSON.stringify(relaySecrets, null, 2) + '\n');
+      console.log(`Wrote ${secretsFile('relay-worker')}  → deploy the relay: cd relay-worker && npm run deploy${fromNpm('relay-worker')}`);
     }
     if (doorwaySecrets) {
-      writePrivate(resolve(root, 'claude-proxy', '.secrets.json'), JSON.stringify(doorwaySecrets, null, 2) + '\n');
-      console.log('Wrote claude-proxy/.secrets.json  → deploy the doorway: cd claude-proxy && npm run deploy');
-      if (!env.CLAUDE_DOORWAY_URL) console.log('After deploying, add CLAUDE_DOORWAY_URL=<the workers.dev address> to .env and run `npm run setup -- --print`.');
+      writePrivate(secretsFile('claude-proxy'), JSON.stringify(doorwaySecrets, null, 2) + '\n');
+      console.log(`Wrote ${secretsFile('claude-proxy')}  → deploy the doorway: cd claude-proxy && npm run deploy${fromNpm('claude-proxy')}`);
+      if (!env.CLAUDE_DOORWAY_URL) console.log(`After deploying, add CLAUDE_DOORWAY_URL=<the workers.dev address> to ${envPath} and re-print the configs with --print.`);
     }
 
     printConfigs(env);
     console.log('\nNext steps:');
-    console.log('  1. npm start           → open http://127.0.0.1:8787 and link WhatsApp (QR code)');
-    console.log('  2. npm run service     → bridge' + (env.RELAY_REMOTE_URL ? ' + relay agent' : '') + ' with automatic restarts');
-    console.log('  3. npm run autostart   → start automatically when you log in (macOS, Linux, Windows)');
-    if (mode === 'first' && env.RELAY_REMOTE_URL) console.log('  Later: add a standby computer by running `npm run setup` there and choosing option 2.');
+    console.log(`  1. ${command('start')}  → open http://127.0.0.1:8787 and link WhatsApp (QR code)`);
+    console.log(`  2. ${command('service')}  → bridge${env.RELAY_REMOTE_URL ? ' + relay agent' : ''} with automatic restarts`);
+    console.log(`  3. ${command('autostart')}  → start automatically when you log in (macOS, Linux, Windows)`);
+    if (isNpxCache()) console.log('     (auto-start needs a permanent install first: npm install -g relay-whatsapp-mcp)');
+    if (mode === 'first' && env.RELAY_REMOTE_URL) console.log(`  Later: add a standby computer by running \`${command('setup')}\` there and choosing option 2.`);
   } finally {
     close();
   }

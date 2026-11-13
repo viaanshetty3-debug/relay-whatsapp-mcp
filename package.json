@@ -1,10 +1,48 @@
 {
-  "name": "whatsapp-relay",
+  "name": "relay-whatsapp-mcp",
   "version": "1.0.0",
-  "private": true,
-  "type": "module",
-  "description": "Self-hosted WhatsApp dashboard and MCP tools for AI clients",
+  "description": "WhatsApp as 37 MCP tools for Claude and ChatGPT: a self-hosted bridge with optional Cloudflare relay and primary/standby failover",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "mcp-server",
+    "whatsapp",
+    "claude",
+    "chatgpt",
+    "claude-code",
+    "baileys",
+    "cloudflare-workers"
+  ],
+  "homepage": "https://github.com/viaanshetty3-debug/relay-whatsapp-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/viaanshetty3-debug/relay-whatsapp-mcp/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/viaanshetty3-debug/relay-whatsapp-mcp.git"
+  },
   "license": "MIT",
+  "mcpName": "io.github.viaanshetty3-debug/relay-whatsapp-mcp",
+  "type": "module",
+  "bin": {
+    "relay-whatsapp-mcp": "bin/relay-whatsapp-mcp.mjs"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "public/",
+    "setup.mjs",
+    "scripts/child-watchdog.mjs",
+    "scripts/doctor.mjs",
+    "scripts/install-autostart.mjs",
+    "scripts/relay-service.mjs",
+    "scripts/media-worker.py",
+    "scripts/macos/",
+    "scripts/linux/",
+    "scripts/windows/",
+    ".env.example",
+    "SECURITY.md"
+  ],
   "engines": {
     "node": ">=22.13.0"
   },
@@ -18,7 +56,8 @@
     "autostart": "node scripts/install-autostart.mjs",
     "mcp": "node src/stdio.js",
     "test": "node --test test/*.test.js",
-    "lint": "node scripts/lint.mjs"
+    "lint": "node scripts/lint.mjs",
+    "prepublishOnly": "npm run lint && npm test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",

@@ -64,7 +64,7 @@ test('setup: client configs are valid JSON and only include remote keys when con
 test('setup: interactive run writes .env and secret files without echoing hidden input',()=>{
   const dir=mkdtempSync(join(tmpdir(),'relay-setup-'));
   try{
-    cpSync(join(repo,'setup.mjs'),join(dir,'setup.mjs'));
+    cpSync(join(repo,'setup.mjs'),join(dir,'setup.mjs'));cpSync(join(repo,'src','paths.js'),join(dir,'src','paths.js'));
     for(const d of ['relay-worker','claude-proxy'])cpSync(join(repo,d,'.gitignore'),join(dir,d,'.gitignore'));
     const input=['1','https://relay.example.com','https://whatsapp-claude.example.workers.dev',''].join('\n');
     const r=spawnSync(process.execPath,[join(dir,'setup.mjs')],{input,encoding:'utf8'});
@@ -80,6 +80,22 @@ test('setup: interactive run writes .env and secret files without echoing hidden
     const printed=spawnSync(process.execPath,[join(dir,'setup.mjs'),'--print'],{encoding:'utf8'});
     assert.ok(printed.stdout.includes(env.CLAUDE_DOORWAY_KEY));
   }finally{rmSync(dir,{recursive:true,force:true});}
+});
+test('setup: from an npm install, private files go to ~/.relay-whatsapp-mcp, never into node_modules',()=>{
+  const tmp=mkdtempSync(join(tmpdir(),'relay-npm-'));
+  try{
+    const pkg=join(tmp,'node_modules','relay-whatsapp-mcp'),home=join(tmp,'home');
+    cpSync(join(repo,'setup.mjs'),join(pkg,'setup.mjs'));cpSync(join(repo,'src','paths.js'),join(pkg,'src','paths.js'));
+    const env={...process.env,HOME:home,USERPROFILE:home};delete env.RELAY_HOME;
+    const input=['1','https://relay.example.com','https://whatsapp-claude.example.workers.dev',''].join('\n');
+    const r=spawnSync(process.execPath,[join(pkg,'setup.mjs')],{input,encoding:'utf8',env});
+    assert.equal(r.status,0,r.stderr);
+    const relayHome=join(home,'.relay-whatsapp-mcp');
+    const written=parseEnv(readFileSync(join(relayHome,'.env'),'utf8'));assert.equal(written.RELAY_REMOTE_URL,'https://relay.example.com');
+    assert.ok(existsSync(join(relayHome,'relay-worker.secrets.json')));assert.ok(existsSync(join(relayHome,'claude-proxy.secrets.json')));
+    assert.ok(!existsSync(join(pkg,'.env')),'nothing private inside node_modules');
+    assert.match(r.stdout,/relay-whatsapp-mcp start/);
+  }finally{rmSync(tmp,{recursive:true,force:true});}
 });
 test('autostart: templates render for macOS and Linux, escaping awkward paths',()=>{
   const dir='/Users/someone/My Relay & Co';

@@ -12,9 +12,10 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, realpathSyn
 import { homedir, userInfo } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { home as relayHome, isNpxCache, loadEnv } from '../src/paths.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-if (existsSync(resolve(root, '.env'))) process.loadEnvFile(resolve(root, '.env'));
+loadEnv();
 
 export const xmlEscape = value => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 // systemd: quote paths with spaces; escape % (specifier) and backslashes/quotes.
@@ -30,14 +31,17 @@ export function render(template, vars, escape = v => v) {
   });
 }
 
-export function plan({ platform = process.platform, node = process.execPath, dir = root, home = homedir(), env = process.env } = {}) {
+export function plan({ platform = process.platform, node = process.execPath, dir = root, home = homedir(), env = process.env, relay = relayHome } = {}) {
+  // The npx cache can be cleared at any time, which would break the installed service.
+  if (isNpxCache(dir)) throw new Error('Relay is running from the temporary npx cache. Install it permanently first:\n  npm install -g relay-whatsapp-mcp\n  relay-whatsapp-mcp autostart');
+  const logFile = join(relay, 'data', 'service.log');
   if (platform === 'darwin') {
     const label = (env.RELAY_LAUNCHD_PREFIX || 'com.example.whatsapp-relay') + '.service';
     const target = join(home, 'Library', 'LaunchAgents', label + '.plist');
     const template = readFileSync(join(dir, 'scripts', 'macos', 'whatsapp-relay.plist'), 'utf8');
     // Drop the explanatory comment from the installed copy.
-    const body = render(template.replace(/<!--[\s\S]*?-->\n/, ''), { LABEL: label, NODE: node, RELAY_DIR: dir }, xmlEscape);
-    return { platform, label, target, body };
+    const body = render(template.replace(/<!--[\s\S]*?-->\n/, ''), { LABEL: label, NODE: node, RELAY_DIR: dir, RELAY_HOME: relay, LOG_FILE: logFile }, xmlEscape);
+    return { platform, label, target, body, logFile };
   }
   if (platform === 'linux') {
     const target = join(home, '.config', 'systemd', 'user', 'whatsapp-relay.service');
@@ -45,13 +49,14 @@ export function plan({ platform = process.platform, node = process.execPath, dir
     const lines = template.split(/\r?\n/); // tolerate CRLF checkouts
     const body = lines.map(line => {
       if (line.startsWith('WorkingDirectory=')) return 'WorkingDirectory=' + systemdQuote(dir);
+      if (line.startsWith('Environment=RELAY_HOME=')) return 'Environment=' + systemdQuote('RELAY_HOME=' + relay);
       if (line.startsWith('ExecStart=')) return 'ExecStart=' + systemdQuote(node) + ' ' + systemdQuote(join(dir, 'scripts', 'relay-service.mjs'));
       return line;
     }).join('\n');
-    return { platform, label: 'whatsapp-relay.service', target, body };
+    return { platform, label: 'whatsapp-relay.service', target, body, logFile };
   }
   if (platform === 'win32') {
-    return { platform, label: 'WhatsApp Relay', script: join(dir, 'scripts', 'windows', 'install-autostart.ps1'), node, dir };
+    return { platform, label: 'WhatsApp Relay', script: join(dir, 'scripts', 'windows', 'install-autostart.ps1'), node, dir, relay, logFile };
   }
   throw new Error('Unsupported platform: ' + platform);
 }
@@ -65,10 +70,10 @@ function main() {
   const dryRun = process.argv.includes('--dry-run');
   const uninstall = process.argv.includes('--uninstall');
   const p = plan();
-  mkdirSync(join(root, 'data'), { recursive: true, mode: 0o700 });
+  mkdirSync(dirname(p.logFile), { recursive: true, mode: 0o700 });
 
   if (p.platform === 'win32') {
-    const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', p.script, '-NodePath', p.node, '-RelayDir', p.dir];
+    const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', p.script, '-NodePath', p.node, '-RelayDir', p.dir, '-RelayHome', p.relay];
     if (uninstall) args.push('-Uninstall');
     if (dryRun) args.push('-DryRun');
     run('powershell.exe', args);
@@ -87,7 +92,7 @@ function main() {
     mkdirSync(dirname(p.target), { recursive: true });
     writeFileSync(p.target, p.body, { mode: 0o644 });
     run('launchctl', ['bootstrap', domain, p.target]);
-    console.log(`Installed ${p.target}\nRelay now starts when you log in. Logs: ${join(root, 'data', 'service.log')}`);
+    console.log(`Installed ${p.target}\nRelay now starts when you log in. Logs: ${p.logFile}`);
     return;
   }
 

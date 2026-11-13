@@ -5,8 +5,8 @@ import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { command, defaultDataDir, envFile, home } from '../src/paths.js';
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const TIMEOUT = 2500;
 
 // ---------- pure checks (unit-tested) ----------
@@ -22,8 +22,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function checkEnv(env, envFileExists) {
   const results = [];
-  if (!envFileExists) results.push({ name: '.env', status: 'warn', detail: 'not found. Run `npm run setup` (defaults are used meanwhile)' });
-  else results.push({ name: '.env', status: 'ok', detail: 'found' });
+  if (!envFileExists) results.push({ name: '.env', status: 'warn', detail: `not found. Run \`${command('setup')}\` (defaults are used meanwhile)` });
+  else results.push({ name: '.env', status: 'ok', detail: 'found in ' + home });
   if (env.BRIDGE_TOKEN !== undefined && env.BRIDGE_TOKEN.length < 32) results.push({ name: 'BRIDGE_TOKEN', status: 'fail', detail: 'must be at least 32 characters' });
   if (!env.RELAY_REMOTE_URL) {
     results.push({ name: 'Relay', status: 'info', detail: 'not configured: local-only mode (Claude Desktop / Claude Code on this computer)' });
@@ -32,7 +32,7 @@ export function checkEnv(env, envFileExists) {
   let url;
   try { url = new URL(env.RELAY_REMOTE_URL); } catch { results.push({ name: 'RELAY_REMOTE_URL', status: 'fail', detail: 'is not a valid URL' }); return results; }
   if (url.protocol !== 'https:') results.push({ name: 'RELAY_REMOTE_URL', status: 'fail', detail: 'must start with https://' });
-  if (!KEY.test(env.RELAY_AGENT_KEY || '')) results.push({ name: 'RELAY_AGENT_KEY', status: 'fail', detail: 'missing or not a 32-byte base64url key (re-run `npm run setup`)' });
+  if (!KEY.test(env.RELAY_AGENT_KEY || '')) results.push({ name: 'RELAY_AGENT_KEY', status: 'fail', detail: `missing or not a 32-byte base64url key (re-run \`${command('setup')}\`)` });
   if (!UUID.test(env.RELAY_AGENT_ID || '')) results.push({ name: 'RELAY_AGENT_ID', status: 'fail', detail: 'missing or not a UUID' });
   if (!UUID.test(env.RELAY_DEVICE_ID || '')) results.push({ name: 'RELAY_DEVICE_ID', status: 'warn', detail: 'missing: failover read hand-off is disabled for this device' });
   const role = env.RELAY_FAILOVER_ROLE || 'primary';
@@ -53,14 +53,14 @@ async function timed(fn) {
 
 async function checkBridge(env) {
   const port = Number(env.PORT || 8787);
-  const dataDir = resolve(root, env.DATA_DIR || 'data');
+  const dataDir = env.DATA_DIR ? resolve(home, env.DATA_DIR) : defaultDataDir();
   let token = env.BRIDGE_TOKEN;
   if (!token) try { token = readFileSync(join(dataDir, 'owner-token'), 'utf8').trim(); } catch {}
   const r = await timed(async signal => {
     const res = await fetch(`http://127.0.0.1:${port}/api/state`, { headers: token ? { Authorization: 'Bearer ' + token } : {}, signal });
     return { status: res.status, body: res.ok ? await res.json() : null };
   });
-  if (r.error) return [{ name: 'Bridge', status: 'fail', detail: `not reachable on 127.0.0.1:${port} (${r.error}). Start it: npm start or npm run service` }];
+  if (r.error) return [{ name: 'Bridge', status: 'fail', detail: `not reachable on 127.0.0.1:${port} (${r.error}). Start it: ${command('start')} or ${command('service')}` }];
   if (r.status === 401 || r.status === 403) return [{ name: 'Bridge', status: 'fail', detail: 'running, but the owner token does not match (check BRIDGE_TOKEN / DATA_DIR)' }];
   if (!r.body) return [{ name: 'Bridge', status: 'fail', detail: `HTTP ${r.status}` }];
   const s = r.body;
@@ -87,7 +87,7 @@ async function checkRelay(env) {
   const age = r.body.lastSeen ? Math.round((Date.now() - r.body.lastSeen) / 1000) : null;
   return [{ name: 'Relay', status: r.body.online ? 'ok' : 'warn',
     detail: r.body.online ? `online; a device polled ${age}s ago${r.body.bridge?.state ? ` (WhatsApp ${r.body.bridge.state})` : ''}`
-      : `reachable, but no device of this agent is polling${age !== null ? ` (last seen ${age}s ago)` : ''}. Is npm run service running?` }];
+      : `reachable, but no device of this agent is polling${age !== null ? ` (last seen ${age}s ago)` : ''}. Is ${command('service')} running?` }];
 }
 
 async function checkDoorway(env) {
@@ -106,14 +106,14 @@ function checkAutostart(platform = process.platform, home = homedir(), env = pro
   let installed = null;
   if (platform === 'darwin') installed = existsSync(join(home, 'Library', 'LaunchAgents', (env.RELAY_LAUNCHD_PREFIX || 'com.example.whatsapp-relay') + '.service.plist'));
   else if (platform === 'linux') installed = existsSync(join(home, '.config', 'systemd', 'user', 'whatsapp-relay.service'));
-  if (installed === null) return [{ name: 'Auto-start', status: 'info', detail: 'run `npm run autostart` to start at login (check Task Scheduler for "WhatsApp Relay")' }];
-  return [{ name: 'Auto-start', status: installed ? 'ok' : 'info', detail: installed ? 'installed' : 'not installed. Run `npm run autostart` to start at login' }];
+  if (installed === null) return [{ name: 'Auto-start', status: 'info', detail: `run \`${command('autostart')}\` to start at login (check Task Scheduler for "WhatsApp Relay")` }];
+  return [{ name: 'Auto-start', status: installed ? 'ok' : 'info', detail: installed ? 'installed' : `not installed. Run \`${command('autostart')}\` to start at login` }];
 }
 
 const ICON = { ok: '✓', warn: '!', fail: '✗', info: '·' };
 
 async function main() {
-  const envPath = resolve(root, '.env');
+  const envPath = envFile;
   const envFileExists = existsSync(envPath);
   if (envFileExists) process.loadEnvFile(envPath);
   const env = process.env;

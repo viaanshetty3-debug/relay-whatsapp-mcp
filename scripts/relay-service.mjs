@@ -11,13 +11,14 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, openSync, readFileSync, writeSync, realpathSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { defaultDataDir, home, loadEnv } from '../src/paths.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-if (existsSync(resolve(root, '.env'))) process.loadEnvFile(resolve(root, '.env'));
+loadEnv();
 
-export function relayConfigured(env = process.env, dir = root) {
+export function relayConfigured(env = process.env, dataDir = env.DATA_DIR || defaultDataDir()) {
   if (env.RELAY_REMOTE_URL && env.RELAY_AGENT_KEY && env.RELAY_AGENT_ID) return true;
-  try { return JSON.parse(readFileSync(resolve(dir, 'data', 'remote-link.json'), 'utf8')).published === true; }
+  try { return JSON.parse(readFileSync(resolve(dataDir, 'remote-link.json'), 'utf8')).published === true; }
   catch { return false; }
 }
 
@@ -32,7 +33,7 @@ function main() {
   const logIndex = process.argv.indexOf('--log');
   let output = 'inherit';
   if (logIndex !== -1 && process.argv[logIndex + 1]) {
-    const file = resolve(root, process.argv[logIndex + 1]);
+    const file = resolve(home, process.argv[logIndex + 1]); // relative paths are relative to the Relay home
     mkdirSync(dirname(file), { recursive: true });
     output = openSync(file, 'a', 0o600);
   }

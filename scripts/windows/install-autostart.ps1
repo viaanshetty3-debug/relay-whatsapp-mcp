@@ -6,10 +6,11 @@
     powershell -ExecutionPolicy Bypass -File scripts\windows\install-autostart.ps1
   Remove:
     powershell -ExecutionPolicy Bypass -File scripts\windows\install-autostart.ps1 -Uninstall
-  Logs: data\service.log
+  Logs: data\service.log in the Relay home (-RelayHome; defaults to the Relay folder)
 #>
 param(
   [string]$RelayDir = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path,
+  [string]$RelayHome = '',
   [string]$NodePath = $(try { (Get-Command node -ErrorAction Stop).Source } catch { '' }),
   [string]$TaskName = 'WhatsApp Relay',
   [switch]$Uninstall,
@@ -28,10 +29,11 @@ if ($Uninstall) {
 if (-not $NodePath -or -not (Test-Path $NodePath)) { throw 'Node.js was not found. Install Node.js 22.13+ or pass -NodePath.' }
 $service = Join-Path $RelayDir 'scripts\relay-service.mjs'
 if (-not (Test-Path $service)) { throw "Not a Relay folder: $RelayDir" }
-$log = Join-Path $RelayDir 'data\service.log'
+if (-not $RelayHome) { $RelayHome = $RelayDir }
+$log = Join-Path $RelayHome 'data\service.log'
 
 # A hidden PowerShell host keeps Node's console window out of sight.
-$command = "& '$($NodePath -replace "'", "''")' '$($service -replace "'", "''")' --log '$($log -replace "'", "''")'"
+$command = "`$env:RELAY_HOME = '$($RelayHome -replace "'", "''")'; & '$($NodePath -replace "'", "''")' '$($service -replace "'", "''")' --log '$($log -replace "'", "''")'"
 $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command `"$command`"" -WorkingDirectory $RelayDir
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable `

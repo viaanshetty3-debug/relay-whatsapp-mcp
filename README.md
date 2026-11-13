@@ -8,8 +8,32 @@
 [![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#auto-start-on-login)
 [![MCP tools](https://img.shields.io/badge/MCP%20tools-37-8A2BE2.svg)](#tool-reference)
 [![Security policy](https://img.shields.io/badge/security-policy-green.svg)](SECURITY.md)
+[![npm](https://img.shields.io/npm/v/relay-whatsapp-mcp.svg)](https://www.npmjs.com/package/relay-whatsapp-mcp)
 
-<p align="center"><img src="docs/failover-demo.gif" alt="Terminal recording: a client lists WhatsApp chats; the primary bridge is frozen like a closed laptop lid; the standby takes over 5.3 s later and answers in 5.8 s; a message is sent once with zero duplicates; the primary comes back." width="760"></p>
+## Quickstart with npx
+
+Needs [Node.js 22.13+](https://nodejs.org). Nothing to clone:
+
+```bash
+npx relay-whatsapp-mcp setup    # creates keys, prints your Claude configs
+npx relay-whatsapp-mcp start    # open http://127.0.0.1:8787 and scan the QR code with WhatsApp
+```
+
+Leave `start` running. Then connect Claude Code on the same computer:
+
+```bash
+claude mcp add whatsapp -- npx -y relay-whatsapp-mcp mcp
+```
+
+For Claude Desktop, add this to `claude_desktop_config.json` and restart it:
+
+```json
+{ "mcpServers": { "whatsapp": { "command": "npx", "args": ["-y", "relay-whatsapp-mcp", "mcp"] } } }
+```
+
+Try it without a WhatsApp account first: `npx relay-whatsapp-mcp demo` (sample chats). `npx relay-whatsapp-mcp doctor` checks everything; `help` lists all commands. Your private files (`.env`, the WhatsApp session, data) live in `~/.relay-whatsapp-mcp`, never inside npm's folders; set `RELAY_HOME` to change that. If Claude Desktop reports that `npx` was not found, put the full path from `which npx` (`where npx` on Windows) in `"command"`. To run Relay at login, install it permanently with `npm install -g relay-whatsapp-mcp`, then run `relay-whatsapp-mcp autostart`. The optional Cloudflare relay (Claude on your phone, failover) is deployed from a clone: see the [5-minute quickstart](#5-minute-quickstart).
+
+<p align="center"><img src="https://raw.githubusercontent.com/viaanshetty3-debug/relay-whatsapp-mcp/main/docs/failover-demo.gif" alt="Terminal recording: a client lists WhatsApp chats; the primary bridge is frozen like a closed laptop lid; the standby takes over 5.3 s later and answers in 5.8 s; a message is sent once with zero duplicates; the primary comes back." width="760"></p>
 <p align="center"><sub>A real run on Cloudflare's free plan with two demo bridges (fake chats), replayed from the recorded terminal output; the waiting part is sped up 2×. The client calls Relay through the same doorway Claude uses.</sub></p>
 
 Relay links your own WhatsApp account as a **linked device** (like WhatsApp Web) on a computer you control and exposes it to AI assistants through the [Model Context Protocol](https://modelcontextprotocol.io). Ask Claude to summarise a group chat, find the address a friend sent last month, transcribe a voice note, or draft and send a reply. It acts only when you ask it to.
@@ -212,7 +236,7 @@ The bridge also exposes the resource `whatsapp://recent` (recent permitted messa
 
 ## Configuration
 
-`npm run setup` writes `.env`. Every value can also be set as a normal environment variable. See [.env.example](.env.example).
+`npm run setup` writes `.env` (in the clone, or in `~/.relay-whatsapp-mcp` when installed from npm). Every value can also be set as a normal environment variable. See [.env.example](.env.example).
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -222,7 +246,8 @@ The bridge also exposes the resource `whatsapp://recent` (recent permitted messa
 | `READ_ONLY` | `false` | Block every outgoing action, draft change and schedule |
 | `ALLOWED_CHATS` | all chats | Comma-separated chat JIDs the AI may access |
 | `PUBLIC_URL` | local | Public HTTPS origin if you expose the bridge directly (enables OAuth) |
-| `DATA_DIR` | `./data` | WhatsApp credentials, SQLite history, media cache |
+| `RELAY_HOME` | the clone, or `~/.relay-whatsapp-mcp` for npm installs | Folder holding `.env` and `data/` |
+| `DATA_DIR` | `$RELAY_HOME/data` | WhatsApp credentials, SQLite history, media cache |
 | `RELAY_REMOTE_URL` | none | Your relay's HTTPS origin (leave unset for local-only) |
 | `RELAY_AGENT_KEY` / `RELAY_AGENT_ID` | generated | Shared by your devices; the key also encrypts the relay queue |
 | `RELAY_DEVICE_ID` | generated | Unique per device; used for failover and read handoff |
@@ -260,6 +285,7 @@ Relay secrets: `WA_AGENT_KEY`, `WA_CLIENT_KEY` ([relay-worker/.env.example](rela
 ## Project layout
 
 ```
+bin/              `relay-whatsapp-mcp` command for the npm package (setup, start, mcp, doctor, …)
 src/              bridge: WhatsApp session (Baileys), SQLite store, MCP tools, dashboard API, remote agent
 public/           dashboard (no build step, no external assets)
 scripts/          setup helpers, service runner, auto-start installers (macos/, linux/, windows/)
@@ -268,6 +294,7 @@ claude-proxy/     Cloudflare Worker "doorway" for claude.ai custom connectors
 deploy/           Docker / self-hosting recipes (see deploy/SELF-HOST.md, deploy/HOSTING.md)
 test/             Node test suite (+ Python tests for media and session transfer)
 setup.mjs         `npm run setup`
+server.json       MCP Registry metadata (must match package.json's version and mcpName)
 ```
 
 ## Development

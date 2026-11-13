@@ -69,6 +69,12 @@ Every behaviour change needs a test. In particular:
 
 By contributing, you agree that your contributions are licensed under the [MIT License](LICENSE).
 
+## Releasing (maintainers)
+
+1. Bump `version` in **both** `package.json` and `server.json` (twice in `server.json`: top level and in `packages`). `test/package.test.js` fails if they differ.
+2. `npm pack --dry-run` and check that only `bin/`, `src/`, `public/`, the runtime scripts and docs are listed (the test enforces this too).
+3. `npm publish` (runs lint and tests first via `prepublishOnly`), then `mcp-publisher publish`.
+
 ## Code of conduct
 
 Be kind and constructive, and assume good intent. Harassment or personal attacks aren't tolerated; maintainers may remove comments or contributors who don't follow this.

@@ -2,13 +2,14 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { loadEnv, defaultDataDir } from './paths.js';
 
 export const root = fileURLToPath(new URL('../', import.meta.url));
-if (existsSync(resolve(root,'.env'))) process.loadEnvFile(resolve(root,'.env'));
+loadEnv(); // the clone's .env, or ~/.relay-whatsapp-mcp/.env for npm installs (see paths.js)
 export function config(demo=process.argv.includes('--demo')) {
   const production=process.env.NODE_ENV==='production';
   if(production && !process.env.BRIDGE_TOKEN)throw new Error('Set BRIDGE_TOKEN as a private hosting variable before deploying');
-  const dir=resolve(process.env.DATA_DIR || resolve(root,demo?'demo-data':'data'));
+  const dir=resolve(process.env.DATA_DIR || defaultDataDir(demo));
   mkdirSync(dir,{recursive:true,mode:0o700});
   const tokenFile=resolve(dir,'owner-token');
   let token=process.env.BRIDGE_TOKEN;

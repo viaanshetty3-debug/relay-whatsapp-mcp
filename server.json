@@ -1,0 +1,46 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.viaanshetty3-debug/relay-whatsapp-mcp",
+  "title": "Relay for WhatsApp",
+  "description": "Your WhatsApp as 37 MCP tools: read, search, send and media, via a self-hosted bridge.",
+  "repository": {
+    "url": "https://github.com/viaanshetty3-debug/relay-whatsapp-mcp",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/viaanshetty3-debug/relay-whatsapp-mcp#readme",
+  "version": "1.0.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "relay-whatsapp-mcp",
+      "version": "1.0.0",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "RELAY_HOME",
+          "description": "Folder with Relay's .env and WhatsApp session (default: ~/.relay-whatsapp-mcp). Run `npx relay-whatsapp-mcp setup` and `start` first.",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "filepath"
+        },
+        {
+          "name": "BRIDGE_URL",
+          "description": "Address of the running Relay bridge (default: http://127.0.0.1:8787)",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}

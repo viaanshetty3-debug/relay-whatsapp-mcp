@@ -13,6 +13,7 @@ Description=Relay WhatsApp bridge for AI clients
 [Service]
 Type=simple
 WorkingDirectory={{RELAY_DIR}}
+Environment=RELAY_HOME={{RELAY_HOME}}
 ExecStart={{NODE}} {{RELAY_DIR}}/scripts/relay-service.mjs
 Restart=always
 RestartSec=10
