@@ -91,7 +91,7 @@ export class RemoteAgent {
   }
   async localProtocol(headers){
     if(!this.localProtocolPromise){
-      this.localProtocolPromise=this.postLocal({jsonrpc:'2.0',id:'relay-local-initialize',method:'initialize',params:{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'relay-remote-agent',version:'1.0.0'}}},headers).then(response=>{
+      this.localProtocolPromise=this.postLocal({jsonrpc:'2.0',id:'relay-local-initialize',method:'initialize',params:{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'relay-remote-agent',version:'1.1.0'}}},headers).then(response=>{
         const version=response.result?.protocolVersion;
         if(typeof version!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(version))throw new Error('Local WhatsApp bridge did not negotiate an MCP protocol version');
         return version;
