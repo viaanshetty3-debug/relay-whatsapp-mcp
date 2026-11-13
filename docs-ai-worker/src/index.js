@@ -223,7 +223,7 @@ const isQuotaError = error => /4006|neurons|daily free allocation|quota/i.test(S
 // ---------- Gemini (optional, used first when GEMINI_API_KEY is set) ----------
 
 const GEMINI = 'https://generativelanguage.googleapis.com/v1beta';
-export const VERTEX_DEFAULT_MODEL = 'gemini-2.5-flash-lite';
+export const VERTEX_DEFAULT_MODEL = 'gemini-3.1-flash-lite';
 let geminiModelCache = null; // { name, at }
 
 // Picks Google's cheapest current model family (Flash-Lite) from the models this key can use:

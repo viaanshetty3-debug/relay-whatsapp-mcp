@@ -246,7 +246,7 @@ test('gemini via Vertex AI when VERTEX_PROJECT is set', async () => {
     assert.equal(res.headers.get('X-Relay-Engine'), 'gemini');
     assert.equal(await answerText(res), 'Port 8787.');
     assert.equal(seen.length, 1, 'no model-list call on Vertex');
-    assert.equal(seen[0].url, 'https://aiplatform.googleapis.com/v1/projects/my-proj/locations/global/publishers/google/models/gemini-2.5-flash-lite:streamGenerateContent?alt=sse');
+    assert.equal(seen[0].url, 'https://aiplatform.googleapis.com/v1/projects/my-proj/locations/global/publishers/google/models/gemini-3.1-flash-lite:streamGenerateContent?alt=sse');
     assert.equal(seen[0].key, 'vertex-key');
   } finally { globalThis.fetch = docsFetch; }
 });
