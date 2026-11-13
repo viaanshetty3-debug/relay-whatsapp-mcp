@@ -5,7 +5,9 @@ let token=sessionStorage.getItem('relay-token') || '',state={},chats=[],selected
 let mediaUrl,mediaRequest=0,mediaAnalysisTimer,mediaJob;
 const escape=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const time=t=>t?new Date(Number(t)*1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'';
-const name=c=>chats.find(x=>x.id===c)?.name || c?.split('@')[0] || 'Conversation';
+// People not in your contacts show as +number, like WhatsApp does.
+const label=id=>{const [user,domain]=String(id||'').split('@');return domain==='s.whatsapp.net'&&/^\d+$/.test(user)?'+'+user:user||'Conversation';};
+const name=c=>chats.find(x=>x.id===c)?.name || label(c);
 function toast(message){$('#toast').textContent=message;$('#toast').hidden=false;clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('#toast').hidden=true,5000);}
 async function api(path,body){
   const response=await fetch(withProfile(path),{method:body===undefined?'GET':'POST',headers:{...authHeaders(),...(body!==undefined?{'Content-Type':'application/json'}:{})},body:body!==undefined?JSON.stringify(body):undefined});
@@ -150,7 +152,7 @@ async function refreshChats(){const asked=profile,list=await tool('list_chats',{
   chats=list;$('#chat-count').textContent=chats.length;renderChats();}
 function renderChats(){
   const query=$('#chat-search').value.toLowerCase();const filtered=chats.filter(c=>(!unread||Number(c.unreadCount)>0)&&[c.name,c.id].join(' ').toLowerCase().includes(query));
-  $('#chat-list').innerHTML=filtered.length?filtered.map(c=>`<button class="chat-item ${c.id===selected?'active':''}" data-chat="${escape(c.id)}"><span class="avatar ${c.id.endsWith('@g.us')?'group':''}">${escape((c.name || c.id).split(' ').slice(0,2).map(s=>s[0]).join('').toUpperCase())}</span><span class="chat-copy"><span class="chat-name-row"><span class="chat-name">${escape(c.name || c.id.split('@')[0])}</span><span class="chat-time">${time(c.conversationTimestamp)}</span></span><span class="chat-preview">${escape(c.preview || (c.id.endsWith('@g.us')?'Group conversation':'Start a conversation'))}</span></span>${c.unreadCount>0?`<span class="unread-badge">${escape(c.unreadCount)}</span>`:''}</button>`).join(''):'<div class="blank-state">No conversations here yet.<br>Pair WhatsApp to sync your chats.</div>';
+  $('#chat-list').innerHTML=filtered.length?filtered.map(c=>`<button class="chat-item ${c.id===selected?'active':''}" data-chat="${escape(c.id)}"><span class="avatar ${c.id.endsWith('@g.us')?'group':''}">${escape((c.name || c.id).split(' ').slice(0,2).map(s=>s[0]).join('').toUpperCase())}</span><span class="chat-copy"><span class="chat-name-row"><span class="chat-name">${escape(c.name || label(c.id))}</span><span class="chat-time">${time(c.conversationTimestamp)}</span></span><span class="chat-preview">${escape(c.preview || (c.id.endsWith('@g.us')?'Group conversation':'Start a conversation'))}</span></span>${c.unreadCount>0?`<span class="unread-badge">${escape(c.unreadCount)}</span>`:''}</button>`).join(''):'<div class="blank-state">No conversations here yet.<br>Pair WhatsApp to sync your chats.</div>';
 }
 $('#chat-list').addEventListener('click',guarded(async e=>{const b=e.target.closest('[data-chat]');if(b)await selectChat(b.dataset.chat);}));
 $('#chat-search').addEventListener('input',renderChats);
