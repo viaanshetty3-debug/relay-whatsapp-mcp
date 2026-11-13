@@ -119,7 +119,10 @@ async function showAuth(){
       if(r.ok){signupTicket=ticket;$('#signup-email').value=t.email;$('#signup-email').readOnly=true;if(!$('#signup-name').value)$('#signup-name').value=t.name;$('#signup-note').textContent=`Signed in with ${t.provider}. Add your country, phone number and a password to finish.`;$$('[data-social]').forEach(e=>e.hidden=true);$$('[data-social-or]').forEach(e=>e.hidden=true);}
       else $('#login-error').textContent=t.error;
     }
-    if(!auth.emailReady&&!signupTicket)$('#signup-note').textContent='One account owns this bridge. Email sending isn\'t set up yet: run `npx relay-whatsapp-mcp setup` and choose email so Relay can send your code'+((auth.providers||[]).length?', or sign up with an account below.':'.');
+    // No way to email a code right now: offer the sign-in buttons instead of a form that can't finish.
+    const social=(auth.providers||[]).length,noEmail=!auth.emailReady&&!signupTicket&&social>0;
+    $('#signup-form').hidden=noEmail;if(noEmail)document.querySelectorAll('#auth-signup [data-social-or]').forEach(e=>e.hidden=true);
+    if(!auth.emailReady&&!signupTicket)$('#signup-note').textContent=social?'Sign up with one of these accounts. Email sign-up is unavailable right now.':'One account owns this bridge. Relay can\'t send email codes here: set SMTP_URL in .env (see README) so Relay can send your code.';
   }else{panel('signin');paintSocial('Continue');}
   if(params.get('auth_error'))$('#login-error').textContent=params.get('auth_error');
 }

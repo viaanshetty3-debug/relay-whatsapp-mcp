@@ -17,11 +17,10 @@
 Needs [Node.js 22.13+](https://nodejs.org). Nothing to clone:
 
 ```bash
-npx relay-whatsapp-mcp setup    # creates keys, prints your Claude configs
-npx relay-whatsapp-mcp start    # open http://127.0.0.1:8787, create your account, scan the QR code
+npx relay-whatsapp-mcp
 ```
 
-Leave `start` running. Then connect Claude Code on the same computer:
+Your browser opens <http://127.0.0.1:8787>. Create your account (Google, GitHub, or email), click **Connect WhatsApp**, and scan the QR code from **WhatsApp → Settings → Linked devices**. Leave the command running. Then connect Claude Code on the same computer:
 
 ```bash
 claude mcp add whatsapp -- npx -y relay-whatsapp-mcp mcp

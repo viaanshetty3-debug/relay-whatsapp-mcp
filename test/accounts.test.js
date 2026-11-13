@@ -266,7 +266,7 @@ test('sign in through the Relay Accounts service: only a correctly signed, match
   };
   const mails = [];
   const fakeFetch = async (url, init = {}) => {
-    if (String(url) === 'https://accounts.test/providers') return Response.json([{ id: 'google', name: 'Google' }, { id: 'evil', name: 'Evil' }]);
+    if (String(url) === 'https://accounts.test/health') return Response.json({ ok: true, providers: ['google', 'evil'], email: true });
     if (String(url) === 'https://accounts.test/email/code') { mails.push(JSON.parse(init.body)); return Response.json({ ok: true }); }
     throw new Error('unexpected ' + url);
   };
@@ -315,4 +315,15 @@ test('sign in through the Relay Accounts service: only a correctly signed, match
   await call('/auth/reset/request', { body: { email: 'ada@example.com' } });
   assert.equal(mails.length, 1); assert.equal(mails[0].to, 'ada@example.com'); assert.equal(mails[0].purpose, 'reset'); assert.match(mails[0].code, /^\d{6}$/);
   assert.equal(Object.keys(mails[0]).sort().join(), 'code,purpose,to', 'only the address, code and purpose leave the bridge');
+});
+
+test('when the shared service can\'t email codes yet, sign-up offers only the sign-in buttons', async t => {
+  const fakeFetch = async url => {
+    if (String(url) === 'https://accounts.test/health') return Response.json({ ok: true, providers: ['google', 'github'], email: false });
+    throw new Error('unexpected ' + url);
+  };
+  const { call } = await start(t, { demo: false, accountsUrl: 'https://accounts.test', fetch: fakeFetch });
+  const s = (await call('/auth/status')).json;
+  assert.equal(s.emailReady, false, 'reports that codes can\'t be sent, instead of failing after the form');
+  assert.deepEqual(s.providers.map(p => p.id), ['google', 'github']);
 });

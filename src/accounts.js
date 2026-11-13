@@ -84,6 +84,7 @@ export function createMailer(config, fetchImpl = fetch) {
     if (!config.accountsUrl || config.demo) return null;
     // Default: codes are emailed by the shared Relay Accounts service, so there's nothing to set up.
     return {
+      broker: true,
       async send({ to, code, purpose }) {
         const res = await fetchImpl(`${config.accountsUrl}/email/code`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, code, purpose }), signal: AbortSignal.timeout(15000) });
         if (!res.ok) { const j = await res.json().catch(() => ({})); const e = new Error(`Relay Accounts: HTTP ${res.status}`); e.userMessage = j.error; throw e; }
@@ -103,17 +104,22 @@ export function mountAccounts(app, config, store) {
   const fetchImpl = config.fetch || fetch;
   const mailer = createMailer(config, fetchImpl);
   const accountsKey = config.accountsPublicKey || process.env.RELAY_ACCOUNTS_PUBLIC_KEY || ACCOUNTS_PUBLIC_KEY;
-  let brokerCache = { at: 0, list: [] };
-  async function brokerProviders() {
-    if (!config.accountsUrl) return [];
-    if (Date.now() - brokerCache.at < (brokerCache.list.length ? 10 * 60000 : 60000)) return brokerCache.list;
+  // What the shared Relay Accounts service can do right now: sign-in buttons, and whether it can email codes.
+  let brokerCache = { at: 0, list: [], email: false };
+  async function brokerHealth() {
+    if (!config.accountsUrl) return brokerCache;
+    const healthy = brokerCache.list.length && brokerCache.email;
+    if (Date.now() - brokerCache.at < (healthy ? 10 * 60000 : 60000)) return brokerCache;
     try {
-      const res = await fetchImpl(`${config.accountsUrl}/providers`, { signal: AbortSignal.timeout(3000) });
-      const list = res.ok ? (await res.json()).filter(p => PROVIDERS[p?.id]).map(p => p.id) : [];
-      brokerCache = { at: Date.now(), list };
-    } catch { brokerCache = { at: Date.now(), list: [] }; }
-    return brokerCache.list;
+      const res = await fetchImpl(`${config.accountsUrl}/health`, { signal: AbortSignal.timeout(3000) });
+      const h = res.ok ? await res.json() : {};
+      brokerCache = { at: Date.now(), list: (Array.isArray(h.providers) ? h.providers : []).filter(id => PROVIDERS[id]), email: h.email === true };
+    } catch { brokerCache = { at: Date.now(), list: [], email: false }; }
+    return brokerCache;
   }
+  const brokerProviders = async () => (await brokerHealth()).list;
+  // Can this bridge email a code right now? (Your own SMTP server, or the shared service when its Gmail is connected.)
+  const emailReady = async () => Boolean(config.demo) || (Boolean(mailer) && (!mailer.broker || (await brokerHealth()).email));
   const directProviders = () => Object.keys(PROVIDERS).filter(id => (config.providers ? config.providers[id] : providerConfig(id)));
   const secureCookie = new URL(config.base).protocol === 'https:';
   const localBase = ['127.0.0.1', 'localhost', '[::1]'].includes(new URL(config.base).hostname);
@@ -203,7 +209,7 @@ export function mountAccounts(app, config, store) {
     res.json({
       hasAccount: Boolean(o), signedIn: sessionValid(req), email: sessionValid(req) ? o.email : undefined,
       name: sessionValid(req) ? o.fullName : undefined, providers: providers.map(id => ({ id, name: PROVIDERS[id].name })),
-      emailReady: Boolean(mailer) || Boolean(config.demo), hostedSetup: !localBase && !o,
+      emailReady: await emailReady(), hostedSetup: !localBase && !o,
     });
   });
 
