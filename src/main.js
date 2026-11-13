@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
 import { config } from './config.js';
 import { Store } from './store.js';
+import { openVault } from './vault.js';
 import { WhatsApp } from './whatsapp.js';
 import { DemoWhatsApp } from './demo.js';
 import { Bridge } from './tools.js';
@@ -8,7 +9,9 @@ import { createApp } from './server.js';
 import { Profiles } from './profiles.js';
 import { openBrowser, shouldOpenBrowser } from './open-browser.js';
 const cfg=config();
-const store=new Store(resolve(cfg.dir,'bridge.sqlite'));
+let store;
+try{store=new Store(resolve(cfg.dir,'bridge.sqlite'),{vault:cfg.demo?null:openVault(cfg.dir)});}
+catch(e){console.error(`Relay can't open its data: ${e.message}`);process.exit(1);}
 const wa=cfg.demo?new DemoWhatsApp(store,cfg):new WhatsApp(store,cfg);
 const bridge=new Bridge(store,wa,cfg);
 const profiles=new Profiles(cfg,bridge);

@@ -6,6 +6,7 @@ import { Transform } from 'node:stream';
 import QRCode from 'qrcode';
 import pino from 'pino';
 import { hasLinkedCredentials } from './session-state.js';
+import { useEncryptedAuthState, sealAuthFolder, readAuthFile } from './vault.js';
 import { mediaInfo, MEDIA_KINDS, MEDIA_LIMIT } from './media.js';
 
 // ----- call logs -----
@@ -53,9 +54,8 @@ export class WhatsApp extends EventEmitter {
   // They arrive a few seconds later through the normal history sync.
   async loadOlder(chat) {
     const sock=this.connected();chat=this.canonical(chat);
-    const oldest=this.store.db.prepare('SELECT data FROM messages WHERE chat=? ORDER BY timestamp ASC,id ASC LIMIT 1').get(chat);
-    if(!oldest)throw new Error('There are no messages in this chat yet to load older ones from.');
-    const m=JSON.parse(oldest.data);
+    const m=this.store.oldestMessage(chat);
+    if(!m)throw new Error('There are no messages in this chat yet to load older ones from.');
     if(typeof sock.fetchMessageHistory!=='function')throw new Error('This WhatsApp library version can\'t load older messages.');
     await sock.fetchMessageHistory(50,m.key,m.timestamp);
     return {requested:true,before:m.timestamp};
@@ -63,7 +63,7 @@ export class WhatsApp extends EventEmitter {
   status() { return {state:this.state,account:this.sock?.user?.id || null,error:this.error || null,demo:this.config.demo}; }
   hasSavedSession() {
     if(existsSync(resolve(this.config.dir,'auth-invalid')))return false;
-    try{return hasLinkedCredentials(JSON.parse(readFileSync(resolve(this.config.dir,'auth','creds.json'),'utf8')));}catch{return false;}
+    try{return hasLinkedCredentials(JSON.parse(readAuthFile(resolve(this.config.dir,'auth'),'creds.json',this.store.vault)));}catch{return false;}
   }
   async start() {
     if(!this.stopped && ['connecting','connected','pairing'].includes(this.state)) return this.status();
@@ -81,7 +81,8 @@ export class WhatsApp extends EventEmitter {
       const {default:makeWASocket,useMultiFileAuthState,makeCacheableSignalKeyStore,Browsers,DisconnectReason,BufferJSON}=this.lib;
       this.BufferJSON=BufferJSON;
       const authDir=resolve(this.config.dir,'auth');mkdirSync(authDir,{recursive:true,mode:0o700});
-      const {state,saveCreds}=await useMultiFileAuthState(authDir);
+      sealAuthFolder(authDir,this.store.vault);
+      const {state,saveCreds}=this.store.vault?await useEncryptedAuthState(authDir,this.store.vault,this.lib):await useMultiFileAuthState(authDir);
       const logger=pino({level:'silent'});
       const sock=makeWASocket({auth:{creds:state.creds,keys:makeCacheableSignalKeyStore(state.keys,logger)},logger,browser:Browsers.ubuntu('Chrome'),markOnlineOnConnect:false,syncFullHistory:true,
         getMessage:async key=>this.raw(this.canonical(key.remoteJid),key.id)?.message});
@@ -143,7 +144,7 @@ export class WhatsApp extends EventEmitter {
         const items=Array.isArray(value)?value:[value];
         for(const item of items){const chat=this.canonical(item.key?.remoteJid || item.id);if(chat && this.permitted(chat))this.store.event(type,chat,item);}
       });
-      on('chats.delete',ids=>{for(const id of ids)if(this.permitted(id)){this.store.db.prepare('DELETE FROM chats WHERE id=?').run(id);this.store.event('chat.delete',id,{id});}});
+      on('chats.delete',ids=>{for(const id of ids)if(this.permitted(id)){this.store.deleteChat(id);this.store.event('chat.delete',id,{id});}});
       return this.status();
     } catch(e) {this.state='disconnected';this.stopped=true;this.error=e.message;throw e;}
   }
@@ -214,11 +215,11 @@ export class WhatsApp extends EventEmitter {
   }
   // Earlier versions stored encrypted edits as unreadable messages: apply them now and remove the rows.
   repairStored() {
-    for(const r of this.store.db.prepare("SELECT data FROM messages WHERE json_extract(data,'$.kind')='secretEncryptedMessage'").all()){
-      const m=JSON.parse(r.data),raw=m.raw?JSON.parse(m.raw,this.BufferJSON?.reviver):null;
+    for(const m of this.store.messagesOfKind('secretEncryptedMessage')){
+      const raw=m.raw?JSON.parse(m.raw,this.BufferJSON?.reviver):null;
       const edit=raw&&this.decryptEdit(m.chat,raw.key,raw.message?.secretEncryptedMessage || {});
       if(edit)this.ingest({...raw,message:edit},false);
-      this.store.db.prepare('DELETE FROM messages WHERE chat=? AND id=?').run(m.chat,m.id);
+      this.store.deleteMessage(m.chat,m.id);
     }
   }
   // One entry per call, keyed by the call ID, so later updates (answered, ended) refine the same entry.

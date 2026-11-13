@@ -12,12 +12,25 @@ Supported version: the latest commit on `main`.
 
 | Data | Where | Protection |
 | --- | --- | --- |
-| WhatsApp linked-device keys (Signal protocol session) | Each bridge's `data/auth/` | Never leave the device. Kept in private directories (mode `0700`; on Windows, protected by your user-profile permissions). Not encrypted at rest by Relay; use full-disk encryption. |
-| Message history, media cache | Each bridge's `data/` (SQLite) | Same as above. |
+| WhatsApp linked-device keys (Signal protocol session) | Each bridge's `data/auth/` | Never leave the device. **Encrypted at rest** (AES-256-GCM, see below) in private directories (mode `0700`; on Windows, your user-profile permissions). |
+| Message history, contacts, chats, drafts, scheduled messages, dashboard account | Each bridge's `data/bridge.sqlite` | **Encrypted at rest** (see below). |
+| Media cache, media-analysis results (transcripts, OCR) | Each bridge's `data/media-cache/`, `data/media-analysis/` | **Not encrypted yet**; private directories only. Use full-disk encryption. |
 | `BRIDGE_TOKEN`, relay keys | `.env` (mode `0600`), Worker secrets | Never committed (`.gitignore`), never logged. |
 | Queued AI requests and responses | Relay D1 database | AES-256-GCM, deleted after completion; expired jobs are purged within minutes. |
 
 Each device is a **separate WhatsApp linked device** with its own keys. Relay never copies WhatsApp credentials between machines, and you can revoke any device from your phone under *WhatsApp → Linked devices*.
+
+## Encryption at rest on each bridge
+
+Since 1.2.0 each data folder has its own random 256-bit key, and Relay encrypts the WhatsApp session files and the message database with AES-256-GCM. Older plain data is converted automatically on first start, and the database is compacted so the old plain text isn't left in free space.
+
+- **Where the key lives (never in the data folder):** macOS login Keychain; on Windows wrapped with DPAPI for your Windows user; on Linux and Termux a `0600` file in `~/.config/relay-whatsapp-mcp/keys/`. You can supply your own with `RELAY_DATA_KEY` (32 random bytes, base64), or turn encryption off with `RELAY_ENCRYPTION=off`. **Hosted containers** (`NODE_ENV=production`, Docker, Railway) are encrypted only when you set `RELAY_DATA_KEY` as a private hosting variable, because a generated key outside the data volume would be lost on the next deploy.
+- **What's encrypted:** message text and details, chat and contact names, phone numbers and group IDs (stored as keyed hashes so lookups still work), drafts, scheduled messages, your dashboard account, and every WhatsApp session file.
+- **What stays readable**, so the database can sort and filter: message timestamps, WhatsApp's random message IDs, message type (text, photo, call…), whether you sent it, whether it was deleted, and roughly how big each entry is. Someone with the file could see how many messages you have and when, not who they're with or what they say.
+- **What it protects against:** a copied or backed-up data folder, a synced folder, or a disk read on another computer without your login.
+- **What it doesn't protect against:** malware running as you, or someone signed in as you. They can ask the Keychain (or key file) for the key just as Relay does. On Linux and Termux the key file is only as safe as your home folder. Keep full-disk encryption on.
+- **Losing the key means losing the history** (the WhatsApp link can be redone with a new QR code). Relay never makes a new key over existing encrypted data: it stops with an error instead.
+- Backups of `data/` made by an older Relay are still plain text. Delete them once you've checked the new version works.
 
 ## Encryption: what it covers, and what it doesn't
 
@@ -60,7 +73,7 @@ Anyone who can message you can put text in front of your AI. Relay treats all Wh
 
 ## Hardening checklist
 
-- Turn on full-disk encryption on every bridge machine (FileVault, LUKS, BitLocker).
+- Turn on full-disk encryption on every bridge machine (FileVault, LUKS, BitLocker). Relay's own encryption covers the database and session, not the media cache.
 - Keep `.env`, `data/` and `*.secrets.json` out of backups you don't control. Never commit them.
 - Rotate keys if one may have leaked: re-run `npm run setup` (a new `.env` with new keys), re-upload the Worker secrets, and update your AI connectors.
 - Remove unused linked devices from WhatsApp.

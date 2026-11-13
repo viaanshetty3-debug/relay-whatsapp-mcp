@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, renameSync 
 import { resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
+import { openVault } from './vault.js';
 import { Store } from './store.js';
 import { WhatsApp } from './whatsapp.js';
 import { DemoWhatsApp } from './demo.js';
@@ -45,7 +46,7 @@ export class Profiles extends EventEmitter {
     super();
     this.config = config;
     this.open = open || (cfg => {
-      const store = new Store(resolve(cfg.dir, 'bridge.sqlite'));
+      const store = new Store(resolve(cfg.dir, 'bridge.sqlite'), { vault: cfg.demo ? null : openVault(cfg.dir) });
       const wa = cfg.demo ? new DemoWhatsApp(store, cfg) : new WhatsApp(store, cfg);
       return new Bridge(store, wa, cfg);
     });

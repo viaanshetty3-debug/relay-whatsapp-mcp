@@ -106,7 +106,22 @@ def fail(message):
 creds=data/'auth'/'creds.json'
 if not creds.is_file():
     fail('No saved WhatsApp session was found in the phone bridge data folder. Mac data was not changed.')
-credentials=json.loads(creds.read_text())
+vault_meta=None
+if (data/'vault.json').is_file():
+    vault_meta=json.loads((data/'vault.json').read_text())
+    if vault_meta.get('method')!='file':
+        fail('The phone session is encrypted with a key Relay cannot export ('+str(vault_meta.get('method'))+'). Mac data was not changed.')
+    key_file=Path(os.environ.get('XDG_CONFIG_HOME') or Path.home()/'.config')/'relay-whatsapp-mcp'/'keys'/(vault_meta['keyId']+'.key')
+    if not key_file.is_file():
+        fail('The phone session is encrypted but its key file is missing. Mac data was not changed.')
+creds_text=creds.read_text()
+if creds_text.startswith('rv1:'):
+    if vault_meta is None:fail('The phone session is encrypted but vault.json is missing. Mac data was not changed.')
+    reader="import {openVault,readAuthFile} from "+json.dumps((root/'src'/'vault.js').as_uri())+";const d=process.argv[1];process.stdout.write(readAuthFile(d+'/auth','creds.json',openVault(d,{env:{}})))"
+    result=subprocess.run(['node','--input-type=module','-e',reader,str(data)],capture_output=True,text=True)
+    if result.returncode:fail('Could not decrypt the phone session to check it. Mac data was not changed.')
+    creds_text=result.stdout
+credentials=json.loads(creds_text)
 if not has_linked_credentials(credentials):
     fail('The saved phone session has no completed pairing credentials. A pending phone code alone is not a linked session. Mac data was not changed.')
 if (data/'auth-invalid').exists():
@@ -151,6 +166,9 @@ with tempfile.TemporaryDirectory(prefix='relay-transfer-') as tmp:
         archive.add(data/'auth',arcname='auth')
         archive.add(data/'owner-token',arcname='owner-token')
         archive.add(snapshot,arcname='bridge.sqlite')
+        if vault_meta is not None:
+            archive.add(data/'vault.json',arcname='vault.json')
+            archive.add(key_file,arcname='data-key')
 '''
 
 
@@ -170,7 +188,7 @@ def extract_bundle(filename, destination):
     with tarfile.open(filename, 'r:gz') as archive:
         for member in archive:
             path = PurePosixPath(member.name)
-            if not path.parts or path.is_absolute() or '..' in path.parts or path.parts[0] not in ('auth', 'owner-token', 'bridge.sqlite'):
+            if not path.parts or path.is_absolute() or '..' in path.parts or path.parts[0] not in ('auth', 'owner-token', 'bridge.sqlite', 'vault.json', 'data-key'):
                 raise RuntimeError('Unexpected path in the session archive')
             if path.parts[0] != 'auth' and len(path.parts) != 1:
                 raise RuntimeError('Unexpected nested session file')
@@ -185,7 +203,14 @@ def extract_bundle(filename, destination):
                 target.chmod(0o600)
             else:
                 raise RuntimeError('Links and special files are not allowed in a session archive')
-    credentials = json.loads((destination/'auth'/'creds.json').read_text())
+    creds_text = (destination/'auth'/'creds.json').read_text()
+    if creds_text.startswith('rv1:') or (destination/'data-key').exists():
+        # Encrypted session: store the received key in this Mac's Keychain, then check the pairing.
+        result = subprocess.run(['node', str(ROOT/'scripts'/'import-data-key.mjs'), str(destination)], capture_output=True, text=True)
+        if result.returncode:
+            raise RuntimeError('Could not import the encrypted session: ' + (result.stderr.strip().splitlines() or ['unknown error'])[-1])
+        creds_text = result.stdout
+    credentials = json.loads(creds_text)
     if not has_linked_credentials(credentials):
         raise RuntimeError('The imported WhatsApp credentials have no completed pairing')
     token = (destination/'owner-token').read_text().strip()

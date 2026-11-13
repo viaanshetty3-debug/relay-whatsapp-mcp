@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Encryption at rest.** Messages, chats, contacts, drafts, scheduled messages, your dashboard account and the WhatsApp session files are encrypted with AES-256-GCM, using a per-device key kept in the macOS Keychain, Windows DPAPI or a private key file (Linux, Termux). Phone numbers and group IDs are stored as keyed hashes. Existing data is converted automatically on first start. See SECURITY.md for exactly what this does and doesn't protect.
+- `RELAY_ENCRYPTION=off` and `RELAY_DATA_KEY` settings.
+
+### Changed
+- "Transfer WhatsApp from Phone" carries an encrypted session's key and stores it in the Mac's Keychain.
+
 ## 1.1.1 — 2026-11-13
 
 ### Added
