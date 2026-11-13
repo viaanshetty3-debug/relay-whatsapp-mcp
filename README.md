@@ -284,7 +284,7 @@ The bridge also exposes the resource `whatsapp://recent` (recent permitted messa
 | `BRIDGE_TOKEN` | generated | Owner token for local MCP clients, and a recovery sign-in for the dashboard (≥ 32 characters) |
 | `RELAY_ACCOUNTS_URL` | `https://relay-accounts.viaan-mcp.workers.dev` | Shared service that emails sign-in codes and runs the sign-in buttons; `off` disables it |
 | `RELAY_ENCRYPTION` | on | `off` stores data unencrypted (not recommended) |
-| `RELAY_DATA_KEY` | Keychain / DPAPI / key file | Your own 32-byte base64 data key instead of the system key store |
+| `RELAY_DATA_KEY` | Keychain / key file | Your own 32-byte base64 data key instead of the system key store |
 | `SMTP_URL` / `MAIL_FROM` | unset | Your own email server for sign-in codes (used instead of the shared service) |
 | `GOOGLE_`/`MICROSOFT_`/`GITHUB_`/`FACEBOOK_CLIENT_ID` and `_CLIENT_SECRET` | unset | Your own OAuth apps for the sign-in buttons (used instead of the shared service) |
 | `AUTO_CONNECT` | `true` with `npm run service` | Reconnect a saved WhatsApp session on start |
@@ -376,7 +376,7 @@ Linux (systemd) and Windows (Task Scheduler) auto-start are installed and checke
 - Relay uses [Baileys](https://github.com/WhiskeySockets/Baileys), an **unofficial** WhatsApp Web client. WhatsApp changes can break it, and automated use can lead to account restrictions. Use it for your own account and normal conversations.
 - Only history that WhatsApp syncs to the linked device is available.
 - AI clients read live data when they call a tool. Relay doesn't make an idle conversation run on its own, and there are no automatic AI replies.
-- WhatsApp credentials and message history are **encrypted at rest** with a per-device key kept in the Keychain (macOS), DPAPI (Windows) or a private key file (Linux, Termux). This protects copies and backups of `data/`, not a machine someone is signed in to, and the media cache isn't encrypted yet. See [SECURITY.md](SECURITY.md#encryption-at-rest-on-each-bridge).
+- WhatsApp credentials and message history are **encrypted at rest** with a per-device key kept in the Keychain (macOS) or a private key file in your user profile (Windows, Linux, Termux). This protects copies and backups of `data/`, not a machine someone is signed in to, and the media cache isn't encrypted yet. See [SECURITY.md](SECURITY.md#encryption-at-rest-on-each-bridge).
 
 ## License
 

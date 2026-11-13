@@ -2,9 +2,10 @@
 //
 // One random 256-bit key per data folder ("data key"). It never sits in the data folder itself:
 //   - macOS: the login Keychain (via /usr/bin/security)
-//   - Windows: wrapped with DPAPI for the current Windows user, stored in vault.json
+//   - Windows: a file in %LOCALAPPDATA%\relay-whatsapp-mcp\keys (your user profile only)
 //   - Linux, Termux and anything else: a 0600 file outside the data folder
-//     (~/.config/relay-whatsapp-mcp/keys/), or RELAY_DATA_KEY if you set one.
+//     (~/.config/relay-whatsapp-mcp/keys/)
+//   - or RELAY_DATA_KEY if you set one.
 // A copy of the data folder, a backup of it, or a lost disk image without your login
 // can't be read. Malware running as you, or someone logged in as you, can still read it.
 import { createCipheriv, createDecipheriv, createHmac, hkdfSync, randomBytes, randomUUID } from 'node:crypto';
@@ -47,18 +48,15 @@ export class Vault {
 // ---- where the key lives ------------------------------------------------------------
 
 const run = (cmd, args, input) => execFileSync(cmd, args, { input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 15000, windowsHide: true }).trim();
-const keyDir = (home = homedir()) => join(process.env.XDG_CONFIG_HOME || join(home, '.config'), SERVICE, 'keys');
+const keyDir = (home = homedir()) => process.platform === 'win32'
+  ? join(process.env.LOCALAPPDATA || join(home, 'AppData', 'Local'), SERVICE, 'keys')
+  : join(process.env.XDG_CONFIG_HOME || join(home, '.config'), SERVICE, 'keys');
 
 export const stores = {
   keychain: {
     get: id => Buffer.from(run('/usr/bin/security', ['find-generic-password', '-s', SERVICE, '-a', id, '-w']), 'base64'),
     // `security -i` reads the command from stdin, so the key never appears in the process list.
     put: (id, key) => run('/usr/bin/security', ['-i'], `add-generic-password -U -s ${SERVICE} -a ${id} -l "Relay data key" -w ${key.toString('base64')}\n`),
-  },
-  dpapi: {
-    ps: script => run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `Add-Type -AssemblyName System.Security; $in=[Console]::In.ReadLine(); ${script}`]),
-    get(id, meta) { return Buffer.from(this.ps("[Convert]::ToBase64String([Security.Cryptography.ProtectedData]::Unprotect([Convert]::FromBase64String($in),$null,'CurrentUser'))", meta.wrapped + '\n'), 'base64'); },
-    put(id, key, meta) { meta.wrapped = this.ps("[Convert]::ToBase64String([Security.Cryptography.ProtectedData]::Protect([Convert]::FromBase64String($in),$null,'CurrentUser'))", key.toString('base64') + '\n'); },
   },
   file: {
     get: id => Buffer.from(readFileSync(join(keyDir(), id + '.key'), 'utf8').trim(), 'base64'),
@@ -69,7 +67,9 @@ export const stores = {
     },
   },
 };
-export const defaultMethod = (platform = process.platform) => platform === 'darwin' ? 'keychain' : platform === 'win32' ? 'dpapi' : 'file';
+// Windows DPAPI was tried and dropped: keys made in one kind of logon session (for example the
+// Task Scheduler) can fail to unwrap in another, which would lock people out of their own data.
+export const defaultMethod = (platform = process.platform) => platform === 'darwin' ? 'keychain' : 'file';
 
 const CHECK = 'relay-vault-check';
 

@@ -1,5 +1,5 @@
 // Used by transfer-termux-session.py after receiving an encrypted session from another device:
-// moves the received data key into this computer's key store (Keychain / DPAPI / key file),
+// moves the received data key into this computer's key store (Keychain or key file),
 // deletes the copy, and prints the decrypted credentials summary so the pairing can be checked.
 import { readFileSync, rmSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { join } from 'node:path';

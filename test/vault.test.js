@@ -146,13 +146,14 @@ test('WhatsApp session files are sealed; old plain files are converted; a wrong 
   assert.ok(isSealed(readFileSync(join(dir, 'creds.json'), 'utf8')), 'the old session is left untouched');
 });
 
-test('on Linux and Termux the key is a private file outside the data folder', { skip: process.platform === 'win32' }, t => {
+test('on Windows, Linux and Termux the key is a private file outside the data folder', t => {
   const dir = tmp(t), cfg = tmp(t), old = process.env.XDG_CONFIG_HOME;
   process.env.XDG_CONFIG_HOME = cfg; t.after(() => { if (old === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = old; });
-  const v = openVault(dir, { platform: 'linux', env: {} });
+  const oldLocal = process.env.LOCALAPPDATA; process.env.LOCALAPPDATA = cfg; t.after(() => { if (oldLocal === undefined) delete process.env.LOCALAPPDATA; else process.env.LOCALAPPDATA = oldLocal; });
+  const v = openVault(dir, { platform: process.platform === 'darwin' ? 'linux' : process.platform, env: {} });
   const meta = JSON.parse(readFileSync(join(dir, 'vault.json'), 'utf8'));
   const file = join(cfg, 'relay-whatsapp-mcp', 'keys', meta.keyId + '.key');
   assert.equal(meta.method, 'file');
-  assert.equal((statSync(file).mode & 0o777).toString(8), '600');
+  if (process.platform !== 'win32') assert.equal((statSync(file).mode & 0o777).toString(8), '600');
   assert.equal(openVault(dir, { env: {} }).open(v.seal('ok', 'z'), 'z'), 'ok');
 });
