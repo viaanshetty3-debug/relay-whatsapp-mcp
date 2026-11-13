@@ -144,6 +144,7 @@ test('dashboard: add a WhatsApp, switch between profiles, rename and remove', as
   w.HTMLDialogElement.prototype.showModal = function () { this.open = true; }; w.HTMLDialogElement.prototype.close = function () { this.open = false; };
   Object.defineProperty(w.crypto, 'randomUUID', { value: randomUUID });
   t.after(async () => { w.close(); await sleep(20); });
+  w.localStorage.setItem('relay-profile', 'deadbeef'); // remembered from a profile that has since been removed
   w.eval(readFileSync(new URL('../public/app.js', import.meta.url), 'utf8'));
   const submit = form => $(form).dispatchEvent(new w.Event('submit', { bubbles: true, cancelable: true }));
   const choose = value => { $('#profile-select').value = value; $('#profile-select').dispatchEvent(new w.Event('change', { bubbles: true })); };
@@ -151,6 +152,7 @@ test('dashboard: add a WhatsApp, switch between profiles, rename and remove', as
   $('#token').value = config.token; submit('#login-form');
   await until(() => !$('#workspace').hidden && d.querySelectorAll('.chat-item').length === 3, 'Login failed');
   assert.deepEqual([...d.querySelectorAll('#profile-select option')].map(o => o.value), ['main', '__add']);
+  assert.equal(w.localStorage.getItem('relay-profile'), 'main', 'a removed profile falls back to Main instead of breaking sign-in');
 
   // Add one from the menu.
   choose('__add'); await until(() => $('#profile-dialog').open, 'Add dialog'); assert.equal($('#profile-select').value, 'main');
@@ -184,4 +186,34 @@ test('dashboard: add a WhatsApp, switch between profiles, rename and remove', as
   // The main profile can be renamed but never removed.
   $('#profile-manage').click(); assert.equal($('#profile-remove-area').hidden, true);
   assert.deepEqual(errors, []);
+});
+
+test('profiles: names can\'t collide with ids or "main", a broken profile isn\'t forgotten, ticks are independent', async t => {
+  const { dir, config, main, profiles } = setup(t);
+  const work = profiles.create('Work');
+  assert.throws(() => profiles.create('main'), /reserved/);
+  assert.throws(() => profiles.create('MAIN'), /reserved/);
+  assert.throws(() => profiles.create(work.id), /letters/);
+  assert.throws(() => profiles.rename(work.id, 'abcdef12'), /letters/);
+  profiles.rename('main', 'Main'); // main may keep its own name
+  const created = JSON.parse(readFileSync(join(dir, 'profiles.json'), 'utf8')).profiles[0].createdAt;
+
+  // A profile that fails to open at start-up stays in profiles.json.
+  let fail = true;
+  const flaky = new Profiles(config, main, { open: cfg => { if (fail && cfg.dir.endsWith(work.id)) throw new Error('database is locked'); return profiles.open(cfg); } });
+  assert.deepEqual(flaky.list().map(p => p.name), ['Main']);
+  const extra = flaky.create('Shop');
+  const saved = JSON.parse(readFileSync(join(dir, 'profiles.json'), 'utf8')).profiles;
+  assert.deepEqual(saved.map(p => p.name).sort(), ['Shop', 'Work']);
+  assert.equal(saved.find(p => p.name === 'Work').createdAt, created, 'creation time kept');
+  await flaky.close(flaky.get(extra.id));
+  fail = false;
+
+  // One profile's scheduler failing doesn't stop the others.
+  let ran = 0; const orig = main.tick.bind(main);
+  main.tick = async () => { throw new Error('boom'); };
+  profiles.get('Work').bridge.tick = async () => { ran++; };
+  const errors = []; const log = console.error; console.error = (...a) => errors.push(a.join(' '));
+  try { await profiles.tick(); } finally { console.error = log; main.tick = orig; }
+  assert.equal(ran, 1); assert.match(errors.join('\n'), /boom/);
 });

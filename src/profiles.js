@@ -52,10 +52,11 @@ export class Profiles extends EventEmitter {
     this.registryPath = config.dir ? resolve(config.dir, 'profiles.json') : null;
     const saved = this.read();
     this.entries = new Map([['main', { id: 'main', name: saved.mainName || 'Main', dir: config.dir, bridge: main }]]);
+    this.unloaded = []; // saved profiles that failed to open: kept in profiles.json so they come back next start
     for (const p of saved.profiles || []) {
       if (!ID.test(p.id) || this.entries.size >= MAX_PROFILES) continue;
-      try { this.entries.set(p.id, this.load(p.id, p.name)); }
-      catch (e) { console.error(`Profile ${p.name}: ${e.message}`); }
+      try { this.entries.set(p.id, this.load(p.id, p.name, p.createdAt)); }
+      catch (e) { console.error(`Profile ${p.name}: ${e.message}`); this.unloaded.push({ id: p.id, name: p.name, createdAt: p.createdAt }); }
     }
   }
   get main() { return this.entries.get('main'); }
@@ -65,7 +66,7 @@ export class Profiles extends EventEmitter {
   }
   save() {
     if (!this.registryPath) return;
-    const extra = [...this.entries.values()].filter(p => p.id !== 'main').map(({ id, name, createdAt }) => ({ id, name, createdAt }));
+    const extra = [...[...this.entries.values()].filter(p => p.id !== 'main').map(({ id, name, createdAt }) => ({ id, name, createdAt })), ...this.unloaded];
     const tmp = this.registryPath + '.tmp';
     writeFileSync(tmp, JSON.stringify({ mainName: this.main.name, profiles: extra }, null, 2) + '\n', { mode: 0o600 });
     renameSync(tmp, this.registryPath);
@@ -90,19 +91,26 @@ export class Profiles extends EventEmitter {
     return { id: p.id, name: p.name, main: p.id === 'main', state: status.state, phone: phoneOf(status.account) };
   }
   list() { return this.all().map(p => this.describe(p)); }
+  // Names and ids share one namespace for the `profile` argument, so a name can't be "main",
+  // look like an id, or match another profile's name.
+  checkName(name, self) {
+    const clean = cleanName(name), key = clean.toLowerCase();
+    if (key === 'main' && self?.id !== 'main') throw new Error('“main” is reserved for the main profile. Pick another name.');
+    if (ID.test(key)) throw new Error('Pick a name with letters, for example “Work”.');
+    if (this.all().some(p => p !== self && p.name.toLowerCase() === key)) throw new Error('A profile with that name already exists.');
+    return clean;
+  }
   create(name) {
     if (!this.config.dir) throw new Error('Profiles need a data folder.');
-    if (this.entries.size >= MAX_PROFILES) throw new Error(`You can link up to ${MAX_PROFILES} WhatsApp profiles.`);
-    const clean = cleanName(name);
-    if (this.all().some(p => p.name.toLowerCase() === clean.toLowerCase())) throw new Error('A profile with that name already exists.');
+    if (this.entries.size + this.unloaded.length >= MAX_PROFILES) throw new Error(`You can link up to ${MAX_PROFILES} WhatsApp profiles.`);
+    const clean = this.checkName(name);
     let id; do id = randomBytes(4).toString('hex'); while (this.entries.has(id));
     const entry = this.load(id, clean);
     this.entries.set(id, entry); this.save(); this.emit('change');
     return this.describe(entry);
   }
   rename(ref, name) {
-    const p = this.get(ref), clean = cleanName(name);
-    if (this.all().some(o => o !== p && o.name.toLowerCase() === clean.toLowerCase())) throw new Error('A profile with that name already exists.');
+    const p = this.get(ref), clean = this.checkName(name, p);
     p.name = clean; this.save(); this.emit('change');
     return this.describe(p);
   }
@@ -123,7 +131,10 @@ export class Profiles extends EventEmitter {
     bridge.analysis?.stop?.();
     if (p.id !== 'main') bridge.store.close();
   }
-  async tick() { for (const p of this.all()) await p.bridge.tick(); }
+  async tick() {
+    const results = await Promise.allSettled(this.all().map(p => p.bridge.tick()));
+    results.forEach((r, i) => { if (r.status === 'rejected') console.error(`Scheduler (${this.all()[i]?.name}):`, r.reason?.message || r.reason); });
+  }
   reconnect() {
     for (const p of this.all()) if (p.bridge.wa.hasSavedSession?.())
       p.bridge.wa.start().catch(e => console.error(`WhatsApp reconnect (${p.name}):`, e.message));

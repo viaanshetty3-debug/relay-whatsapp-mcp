@@ -32,9 +32,10 @@ function paintStatus(){
   }
 }
 async function loadState(){
-  state=await api('/api/state');
-  // The profile was removed (here or in another tab): fall back to the main one.
-  if(state.profiles&&!state.profiles.some(p=>p.id===profile)){profile='main';try{localStorage.setItem('relay-profile',profile);}catch{}state=await api('/api/state');}
+  // A remembered profile that was removed (here, in another tab, or before a restart): fall back to Main.
+  const toMain=async()=>{profile='main';try{localStorage.setItem('relay-profile',profile);}catch{}return api('/api/state');};
+  try{state=await api('/api/state');}catch(e){if(profile==='main'||!/No WhatsApp profile/.test(e.message))throw e;state=await toMain();}
+  if(state.profiles&&!state.profiles.some(p=>p.id===profile))state=await toMain();
   paintStatus();paintProfiles();
 }
 // ----- WhatsApp profiles -----
@@ -48,7 +49,7 @@ async function switchProfile(id){
   if(id===profile)return;
   if($('#message-input').value.trim()&&!confirm('Switch WhatsApp profile and discard the text in the composer?')){paintProfiles();return;}
   profile=id;try{localStorage.setItem('relay-profile',id);}catch{}
-  streamAbort?.abort();selected=null;replyTo=null;editing=null;events=[];$('#message-input').value='';clearReply();clearMedia();
+  streamAbort?.abort();clearTimeout(refreshTimer);selected=null;replyTo=null;editing=null;events=[];$('#message-input').value='';clearReply();clearMedia();
   $('#view-inbox').classList.remove('chat-open');$('#search-results').hidden=true;$('#messages').hidden=false;
   $('#chat-header').innerHTML='<div><span class="eyebrow">YOUR INBOX, IN SYNC</span><h2>Select a conversation</h2></div>';
   $('#messages').innerHTML='<div class="empty"><div class="empty-symbol">↗</div><h2>Choose a conversation.</h2><p>Showing chats for this WhatsApp.</p></div>';
@@ -145,7 +146,8 @@ for(const b of $$('[data-go]'))b.addEventListener('click',()=>{panel(b.dataset.g
 fillCountries();paintRules();
 if(token)openWorkspace().catch(e=>{$('#login-error').textContent=e.message;lock();});
 else showAuth().catch(e=>{$('#auth-loading').hidden=true;$('#login-error').textContent='Could not reach your bridge: '+e.message;});
-async function refreshChats(){chats=await tool('list_chats',{limit:500});$('#chat-count').textContent=chats.length;renderChats();}
+async function refreshChats(){const asked=profile,list=await tool('list_chats',{limit:500});if(asked!==profile)return; // answer for a profile we've left
+  chats=list;$('#chat-count').textContent=chats.length;renderChats();}
 function renderChats(){
   const query=$('#chat-search').value.toLowerCase();const filtered=chats.filter(c=>(!unread||Number(c.unreadCount)>0)&&[c.name,c.id].join(' ').toLowerCase().includes(query));
   $('#chat-list').innerHTML=filtered.length?filtered.map(c=>`<button class="chat-item ${c.id===selected?'active':''}" data-chat="${escape(c.id)}"><span class="avatar ${c.id.endsWith('@g.us')?'group':''}">${escape((c.name || c.id).split(' ').slice(0,2).map(s=>s[0]).join('').toUpperCase())}</span><span class="chat-copy"><span class="chat-name-row"><span class="chat-name">${escape(c.name || c.id.split('@')[0])}</span><span class="chat-time">${time(c.conversationTimestamp)}</span></span><span class="chat-preview">${escape(c.preview || (c.id.endsWith('@g.us')?'Group conversation':'Start a conversation'))}</span></span>${c.unreadCount>0?`<span class="unread-badge">${escape(c.unreadCount)}</span>`:''}</button>`).join(''):'<div class="blank-state">No conversations here yet.<br>Pair WhatsApp to sync your chats.</div>';

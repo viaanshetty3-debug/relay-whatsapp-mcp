@@ -102,13 +102,15 @@ test('sign up with an emailed 6-digit code, then sign in, reset the password and
 
 test('wrong codes and passwords are limited', async t => {
   const sent = [];
-  const { call } = await start(t, { demo: false, mailer: { send: async m => { sent.push(m); } } });
+  const { call, store } = await start(t, { demo: false, mailer: { send: async m => { sent.push(m); } } });
   await call('/auth/signup', { body: PROFILE });
+  assert.equal((await call('/auth/resend', { body: { email: 'ada@example.com' } })).status, 429, 'not again within 30 s');
   const right = sent[0].subject.match(/\d{6}/)[0], wrong = right === '000000' ? '111111' : '000000';
   for (let i = 0; i < 5; i++) await call('/auth/verify', { body: { email: 'ada@example.com', code: wrong } });
   const r = await call('/auth/verify', { body: { email: 'ada@example.com', code: right } });
   assert.equal(r.status, 400); assert.match(r.json.error, /Too many wrong codes/);
   await sleep(10);
+  store.kv('account:pending', { ...store.kv('account:pending'), sentAt: Date.now() - 31000 }); // 30 s later
   assert.equal((await call('/auth/resend', { body: { email: 'ada@example.com' } })).status, 200);
   const fresh = sent.at(-1).subject.match(/\d{6}/)[0];
   assert.equal((await call('/auth/verify', { body: { email: 'ada@example.com', code: fresh } })).status, 200);
@@ -326,4 +328,20 @@ test('when the shared service can\'t email codes yet, sign-up offers only the si
   const s = (await call('/auth/status')).json;
   assert.equal(s.emailReady, false, 'reports that codes can\'t be sent, instead of failing after the form');
   assert.deepEqual(s.providers.map(p => p.id), ['google', 'github']);
+});
+
+test('password-reset codes: one per 30 s and five an hour, so re-asking never buys extra guesses', async t => {
+  const sent = [];
+  const { call, store } = await start(t, { demo: false, mailer: { send: async m => { sent.push(m); } } });
+  await call('/auth/signup', { body: PROFILE });
+  await call('/auth/verify', { body: { email: 'ada@example.com', code: sent[0].subject.match(/\d{6}/)[0] } });
+  await call('/auth/logout', { body: {} });
+  const ask = () => call('/auth/reset/request', { body: { email: 'ada@example.com' } });
+  const later = () => store.kv('account:reset', { ...store.kv('account:reset'), sentAt: Date.now() - 31000 });
+  assert.equal((await ask()).status, 200);
+  assert.equal((await ask()).status, 429, 'not again within 30 s');
+  for (let i = 0; i < 4; i++) { later(); assert.equal((await ask()).status, 200); }
+  later(); const r = await ask();
+  assert.equal(r.status, 429); assert.match(r.json.error, /hour/);
+  assert.equal(sent.filter(m => /reset/i.test(m.text || m.subject || '')).length >= 5, true);
 });

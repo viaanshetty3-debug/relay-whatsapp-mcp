@@ -142,12 +142,14 @@ export function mountAccounts(app, config, store) {
     for (const map of [failures, pendingSocial]) for (const [k, v] of map) if ((v.reset || v.expires) < now) map.delete(k);
   }, 60000); sweep.unref();
 
+  // Behind a hosting proxy (production), req.ip is the visitor's address (server.js sets 'trust proxy').
+  const clientIp = req => req.ip || req.socket.remoteAddress;
   function throttled(req) {
-    const f = failures.get(req.socket.remoteAddress);
+    const f = failures.get(clientIp(req));
     return f && f.reset > Date.now() && f.count >= 10;
   }
   function failed(req) {
-    const key = req.socket.remoteAddress; let f = failures.get(key);
+    const key = clientIp(req); let f = failures.get(key);
     if (!f || f.reset < Date.now()) { f = { count: 0, reset: Date.now() + 15 * 60000 }; failures.set(key, f); }
     f.count++;
   }
@@ -189,6 +191,14 @@ export function mountAccounts(app, config, store) {
     if (mailer) await mailer.send({ to: email, code, purpose, subject: `Your Relay code: ${code}`, text: `Use this code to ${what}: ${code}\n\nIt expires in 10 minutes. If you didn't ask for it, ignore this email.` });
     return code;
   }
+  // New codes: at most one per 30 s and 5 per hour per purpose. With 5 guesses per code that caps
+  // guessing at 25 an hour against a 6-digit code, and it stops inbox flooding.
+  const codeLimit = record => {
+    if (record?.sentAt && Date.now() - record.sentAt < 30000) return 'Wait 30 seconds before asking for another code.';
+    if (codeHistory(record).length > 5) return 'Too many codes were sent. Try again in an hour.';
+    return null;
+  };
+  const codeHistory = record => [...(record?.history || []).filter(t => Date.now() - t < 3600000), Date.now()];
   const codeRecord = (code, extra) => ({ ...extra, codeHash: digest(code), expires: Date.now() + CODE_TTL, tries: 0 });
   const demoCode = code => (config.demo && !mailer ? { demoCode: code } : {});
   const noMail = r => r.status(503).json({ error: 'Relay can\'t send email codes here: set SMTP_URL in .env (see README), or use a sign-in button.' });
@@ -228,9 +238,11 @@ export function mountAccounts(app, config, store) {
       startSession(res); return res.json({ ok: true, signedIn: true });
     }
     if (!mailer && !config.demo) return noMail(res);
+    const prev = store.kv('account:pending'), limit = codeLimit(prev);
+    if (limit) return res.status(429).json({ error: limit });
     try {
       const code = await sendCode(profile.email, 'verify');
-      store.kv('account:pending', codeRecord(code, { profile, passwordHash }));
+      store.kv('account:pending', codeRecord(code, { profile, passwordHash, sentAt: Date.now(), history: codeHistory(prev) }));
       res.json({ ok: true, verify: true, email: profile.email, ...demoCode(code) });
     } catch (e) { mailError(res, e); }
   });
@@ -252,10 +264,10 @@ export function mountAccounts(app, config, store) {
     const email = kind === 'account:reset' ? record?.email : record?.profile?.email;
     if (!record || email !== lower(req.body.email)) return res.json({ ok: true }); // don't reveal anything
     if (!mailer && !config.demo) return noMail(res);
-    if (record.sentAt && Date.now() - record.sentAt < 30000) return res.status(429).json({ error: 'Wait 30 seconds before asking for another code.' });
+    const limit = codeLimit(record); if (limit) return res.status(429).json({ error: limit });
     try {
       const code = await sendCode(email, req.body.purpose);
-      store.kv(kind, { ...record, ...codeRecord(code, {}), sentAt: Date.now() });
+      store.kv(kind, { ...record, ...codeRecord(code, {}), sentAt: Date.now(), history: codeHistory(record) });
       res.json({ ok: true, ...demoCode(code) });
     } catch (e) { mailError(res, e); }
   });
@@ -281,9 +293,11 @@ export function mountAccounts(app, config, store) {
     const o = owner();
     if (!mailer && !config.demo) return noMail(res);
     if (!o || lower(req.body.email) !== o.email) return res.json({ ok: true }); // same answer either way
+    const prev = store.kv('account:reset'), limit = codeLimit(prev);
+    if (limit) return res.status(429).json({ error: limit });
     try {
       const code = await sendCode(o.email, 'reset');
-      store.kv('account:reset', codeRecord(code, { email: o.email, sentAt: Date.now() }));
+      store.kv('account:reset', codeRecord(code, { email: o.email, sentAt: Date.now(), history: codeHistory(prev) }));
       res.json({ ok: true, ...demoCode(code) });
     } catch (e) { mailError(res, e); }
   });
@@ -372,7 +386,7 @@ export function mountAccounts(app, config, store) {
       startSession(res); return res.redirect(302, '/');
     }
     // No account yet: finish signing up with the name and verified email from the provider.
-    if (maySignUp(req, {})) return back(res, 'Create the account on the computer running Relay.');
+    if (localBase && !['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress || '')) return back(res, 'Create the account on the computer running Relay.');
     if (!profile.verified || !profile.email) return back(res, `${name} didn't share a verified email. Sign up with your email instead.`);
     const ticket = secret();
     pendingSocial.set(`ticket:${ticket}`, { provider: providerId, id: String(profile.id), email: lower(profile.email), name: profile.name, expires: Date.now() + 15 * 60000 });

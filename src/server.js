@@ -15,6 +15,7 @@ export function createApp(bridgeOrProfiles,config) {
   // Which WhatsApp a dashboard request is about: ?profile=<id> (default: main).
   const pick=q=>profiles.get(typeof q.query.profile==='string'?q.query.profile:undefined).bridge;
   const app=express();app.disable('x-powered-by');
+  if(config.production)app.set('trust proxy',1); // hosted: one proxy in front; req.ip is the visitor
   const remoteSummary=()=>{try{if(!config.dir)return null;const settings=JSON.parse(readFileSync(resolve(config.dir,'remote-link.json'),'utf8'));return {published:settings.published===true,base:settings.remoteUrl,claudeMcpUrl:settings.remoteUrl+'/whatsapp/mcp'};}catch{return null;}};
   const publicOrigin=new URL(config.base).origin;
   const hosts=new Set([new URL(config.base).host,`127.0.0.1:${config.port}`,`localhost:${config.port}`]);
@@ -27,7 +28,7 @@ export function createApp(bridgeOrProfiles,config) {
     if(!hosts.has(q.headers.host))return r.status(403).json({error:'Invalid Host. Set PUBLIC_URL to your public HTTPS origin.'});
     if(q.headers.origin&&!origins.has(q.headers.origin))return r.status(403).json({error:'Origin not allowed'});
     if(q.path.startsWith('/oauth/') || q.path.startsWith('/auth/') || q.path.startsWith('/api/') || q.path==='/mcp'){
-      const key=q.socket.remoteAddress;let entry=rates.get(key);if(!entry || Date.now()>entry.reset){entry={count:0,reset:Date.now()+60000};rates.set(key,entry);}
+      const key=q.ip||q.socket.remoteAddress;let entry=rates.get(key);if(!entry || Date.now()>entry.reset){entry={count:0,reset:Date.now()+60000};rates.set(key,entry);}
       if(++entry.count>600)return r.status(429).json({error:'Too many requests. Retry in a minute.'});
     }
     next();
