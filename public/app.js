@@ -1,5 +1,6 @@
 const $=s=>document.querySelector(s);
 const $$=s=>[...document.querySelectorAll(s)];
+let profile=(()=>{try{return localStorage.getItem('relay-profile')||'main';}catch{return 'main';}})();
 let token=sessionStorage.getItem('relay-token') || '',state={},chats=[],selected=null,replyTo=null,editing=null,unread=false,view='inbox',events=[],streamAbort,refreshTimer,pageSize=100;
 let mediaUrl,mediaRequest=0,mediaAnalysisTimer,mediaJob;
 const escape=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -7,10 +8,11 @@ const time=t=>t?new Date(Number(t)*1000).toLocaleTimeString([],{hour:'2-digit',m
 const name=c=>chats.find(x=>x.id===c)?.name || c?.split('@')[0] || 'Conversation';
 function toast(message){$('#toast').textContent=message;$('#toast').hidden=false;clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('#toast').hidden=true,5000);}
 async function api(path,body){
-  const response=await fetch(path,{method:body===undefined?'GET':'POST',headers:{...authHeaders(),...(body!==undefined?{'Content-Type':'application/json'}:{})},body:body!==undefined?JSON.stringify(body):undefined});
+  const response=await fetch(withProfile(path),{method:body===undefined?'GET':'POST',headers:{...authHeaders(),...(body!==undefined?{'Content-Type':'application/json'}:{})},body:body!==undefined?JSON.stringify(body):undefined});
   const result=await response.json();if(!response.ok){if(response.status===401)lock();throw new Error(result.error || 'Request failed');}return result;
 }
 const authHeaders=()=>token?{Authorization:'Bearer '+token}:{};
+const withProfile=path=>path+(path.includes('?')?'&':'?')+'profile='+encodeURIComponent(profile);
 async function tool(name,args={}){return (await api('/api/tools/'+name,args)).result;}
 function guarded(fn){return (...args)=>{if(args[0]?.type==='submit')args[0].preventDefault();return Promise.resolve().then(()=>fn(...args)).catch(e=>toast(e.message));};}
 function lock(){streamAbort?.abort();clearTimeout(refreshTimer);$('#media-dialog').close();clearMedia();const hadToken=Boolean(token);token='';sessionStorage.removeItem('relay-token');$('#workspace').hidden=true;$('#login').hidden=false;$('#token').value='';if(!hadToken)fetch('/auth/logout',{method:'POST'}).catch(()=>{});showAuth().catch(()=>{});}
@@ -29,7 +31,57 @@ function paintStatus(){
     else $('#qr-area').innerHTML=`<p>${escape(state.error || (state.state==='connecting'?'Connecting to WhatsApp…':'Waiting for a pairing QR…'))}</p>`;
   }
 }
-async function loadState(){state=await api('/api/state');paintStatus();}
+async function loadState(){
+  state=await api('/api/state');
+  // The profile was removed (here or in another tab): fall back to the main one.
+  if(state.profiles&&!state.profiles.some(p=>p.id===profile)){profile='main';try{localStorage.setItem('relay-profile',profile);}catch{}state=await api('/api/state');}
+  paintStatus();paintProfiles();
+}
+// ----- WhatsApp profiles -----
+const STATE_DOT={connected:'●',connecting:'◌',pairing:'◌'};
+function paintProfiles(){
+  const list=state.profiles||[{id:'main',name:'Main',state:state.state}];const select=$('#profile-select');
+  select.innerHTML=list.map(p=>`<option value="${escape(p.id)}">${escape((STATE_DOT[p.state]||'○')+' '+p.name+(p.phone?' · '+p.phone:''))}</option>`).join('')+'<option value="__add">＋ Add another WhatsApp…</option>';
+  select.value=profile;$('#profile-select').title=list.length>1?'Switch WhatsApp profile':'Add another WhatsApp';
+}
+async function switchProfile(id){
+  if(id===profile)return;
+  if($('#message-input').value.trim()&&!confirm('Switch WhatsApp profile and discard the text in the composer?')){paintProfiles();return;}
+  profile=id;try{localStorage.setItem('relay-profile',id);}catch{}
+  streamAbort?.abort();selected=null;replyTo=null;editing=null;events=[];$('#message-input').value='';clearReply();clearMedia();
+  $('#view-inbox').classList.remove('chat-open');$('#search-results').hidden=true;$('#messages').hidden=false;
+  $('#chat-header').innerHTML='<div><span class="eyebrow">YOUR INBOX, IN SYNC</span><h2>Select a conversation</h2></div>';
+  $('#messages').innerHTML='<div class="empty"><div class="empty-symbol">↗</div><h2>Choose a conversation.</h2><p>Showing chats for this WhatsApp.</p></div>';
+  await loadState();await refreshChats();renderIntegrations();renderActivity();if(view==='scheduled')await renderScheduled();if(view==='drafts')await renderDrafts();startEvents();
+  const p=state.profiles?.find(x=>x.id===profile);toast('Switched to '+(p?.name||'Main'));
+  if(state.state==='disconnected'&&p&&!p.main)await connect();
+}
+// Other profiles' connection dots, every 15 s (only repaint when something changed, so an open menu isn't disturbed).
+setInterval(()=>{if($('#workspace').hidden||document.hidden)return;api('/api/profiles').then(list=>{if(JSON.stringify(list)!==JSON.stringify(state.profiles)){state.profiles=list;paintProfiles();}}).catch(()=>{});},15000);
+let profileEditing=null;
+function openProfileDialog(editing){
+  profileEditing=editing;const p=editing&&state.profiles?.find(x=>x.id===editing);
+  $('#profile-dialog-title').textContent=p?'Rename or remove “'+p.name+'”.':'Add another WhatsApp.';
+  $('#profile-dialog-note').hidden=Boolean(p);$('#profile-save').textContent=p?'Save name':'Add WhatsApp ↗';
+  $('#profile-name').value=p?p.name:'';$('#profile-error').textContent='';
+  $('#profile-remove-area').hidden=!p||p.main;$('#profile-remove').textContent='Remove this WhatsApp';$('#profile-remove').dataset.armed='';
+  $('#profile-dialog').showModal();$('#profile-name').focus();
+}
+$('#profile-select').addEventListener('change',guarded(async()=>{const id=$('#profile-select').value;if(id==='__add'){paintProfiles();openProfileDialog(null);return;}await switchProfile(id);}));
+$('#profile-manage').onclick=()=>openProfileDialog(profile);
+$('#profile-form').addEventListener('submit',async e=>{
+  e.preventDefault();$('#profile-error').textContent='';const name=$('#profile-name').value.trim();
+  try{
+    if(profileEditing){await api('/api/profiles/'+encodeURIComponent(profileEditing)+'/rename',{name});$('#profile-dialog').close();await loadState();toast('Renamed to '+name);}
+    else{const created=await api('/api/profiles',{name});$('#profile-dialog').close();await loadState();await switchProfile(created.id);}
+  }catch(err){$('#profile-error').textContent=err.message;}
+});
+$('#profile-remove').addEventListener('click',async()=>{
+  const button=$('#profile-remove');
+  if(!button.dataset.armed){button.dataset.armed='1';button.textContent='Click again to remove it for good';return;}
+  try{const id=profileEditing;await api('/api/profiles/'+encodeURIComponent(id)+'/remove',{});$('#profile-dialog').close();if(profile===id)await switchProfile('main');else await loadState();toast('WhatsApp profile removed');}
+  catch(err){$('#profile-error').textContent=err.message;}
+});
 async function openWorkspace(){
   await loadState();if(token)sessionStorage.setItem('relay-token',token);if(afterLogin())return;$('#login').hidden=true;$('#workspace').hidden=false;
   await refreshChats();renderIntegrations();renderToolCatalog();startEvents();
@@ -161,7 +213,7 @@ $('#file-input').addEventListener('change',guarded(async()=>{
 function download(blob,filename){const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=filename.replace(/[\x00-\x1f/\\]/g,'_');a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 async function mediaBlob(file){
   if(file.base64)return new Blob([Uint8Array.from(atob(file.base64),c=>c.charCodeAt(0))],{type:file.mimeType});
-  const response=await fetch('/api/media/'+encodeURIComponent(file.fileId),{headers:authHeaders()});
+  const response=await fetch(withProfile('/api/media/'+encodeURIComponent(file.fileId)),{headers:authHeaders()});
   if(!response.ok)throw new Error((await response.json()).error||'Attachment download failed');return response.blob();
 }
 function clearMedia(){
@@ -264,7 +316,7 @@ function renderActivity(){
 async function pollEvents(controller,cursor){
   while(!controller.signal.aborted){
     try{
-      const response=await fetch('/api/tools/wait_updates',{method:'POST',headers:{...authHeaders(),'Content-Type':'application/json'},body:JSON.stringify({after:cursor,timeoutSeconds:2,limit:100}),signal:controller.signal});
+      const response=await fetch(withProfile('/api/tools/wait_updates'),{method:'POST',headers:{...authHeaders(),'Content-Type':'application/json'},body:JSON.stringify({after:cursor,timeoutSeconds:2,limit:100}),signal:controller.signal});
       if(!response.ok)throw new Error('Live updates unavailable');
       const {result}=await response.json();cursor=result.cursor;
       if(result.events.length){events.push(...result.events);events=events.slice(-40);renderActivity();await refreshChats();if(selected)await refreshMessages();if(view==='scheduled')await renderScheduled();}
@@ -277,7 +329,7 @@ async function startEvents(){
   if(!['localhost','127.0.0.1','[::1]'].includes(location.hostname))return pollEvents(controller,cursor);
   while(!controller.signal.aborted){
     try{
-      const response=await fetch('/api/events?after='+cursor,{headers:authHeaders(),signal:controller.signal});if(!response.ok)throw new Error('Live stream unavailable');
+      const response=await fetch(withProfile('/api/events?after='+cursor),{headers:authHeaders(),signal:controller.signal});if(!response.ok)throw new Error('Live stream unavailable');
       const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='';
       while(true){const {done,value}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});let end;
         while((end=buffer.indexOf('\n\n'))>=0){const frame=buffer.slice(0,end);buffer=buffer.slice(end+2);const data=frame.split('\n').filter(s=>s.startsWith('data: ')).map(s=>s.slice(6)).join('\n');if(!data)continue;

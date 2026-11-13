@@ -1,16 +1,16 @@
 # Relay
 
-**Your WhatsApp, as 37 MCP tools for Claude and ChatGPT: self-hosted, failover-ready, and free to run.**
+**Your WhatsApp, as 38 MCP tools for Claude and ChatGPT: self-hosted, failover-ready, and free to run.**
 
 [![CI](https://github.com/viaanshetty3-debug/relay-whatsapp-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/viaanshetty3-debug/relay-whatsapp-mcp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node.js ≥ 22.13](https://img.shields.io/badge/node-%E2%89%A5%2022.13-339933.svg?logo=node.js&logoColor=white)](https://nodejs.org)
 [![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#auto-start-on-login)
-[![MCP tools](https://img.shields.io/badge/MCP%20tools-37-8A2BE2.svg)](#tool-reference)
+[![MCP tools](https://img.shields.io/badge/MCP%20tools-38-8A2BE2.svg)](#tool-reference)
 [![Security policy](https://img.shields.io/badge/security-policy-green.svg)](SECURITY.md)
 [![npm](https://img.shields.io/npm/v/relay-whatsapp-mcp.svg)](https://www.npmjs.com/package/relay-whatsapp-mcp)
 
-**[💬 Ask Relay AI (Free Live Assistant)](https://relay-docs-ai.viaan-mcp.workers.dev)**: a help page with a searchable troubleshooting guide and an AI chat sidebar for questions about setup, failover, the 37 tools or security. It's free, with no login or key, and each visitor's chat stays private in their own browser. Answers come from these docs via Cloudflare Workers AI and can be wrong. If the free daily AI allowance runs out, it answers from a docs search instead.
+**[💬 Ask Relay AI (Free Live Assistant)](https://relay-docs-ai.viaan-mcp.workers.dev)**: a help page with a searchable troubleshooting guide and an AI chat sidebar for questions about setup, failover, the 38 tools or security. It's free, with no login or key, and each visitor's chat stays private in their own browser. Answers come from these docs via Cloudflare Workers AI and can be wrong. If the free daily AI allowance runs out, it answers from a docs search instead.
 
 ## Quickstart with npx
 
@@ -70,7 +70,7 @@ You don't need the hosted part: a single bridge with Claude Desktop or Claude Co
 
 ## Why Relay
 
-### 37 WhatsApp tools, not just "send a message"
+### 38 WhatsApp tools, not just "send a message"
 Read and search history, follow live events with a durable cursor, download and **analyse attachments up to 500 MB** (local transcription, PDF/OCR, video frames, optional local vision), send and reply, edit, delete, react, forward, polls, drafts, scheduled messages, groups and presence. [Full reference ↓](#tool-reference)
 
 ### Failover in about 4–6 seconds, never sending twice
@@ -121,6 +121,14 @@ Open <http://127.0.0.1:8787> and **create your account** (see [Dashboard sign-in
 > Check my WhatsApp connection and list my 3 most recent chats. Don't send anything.
 
 To see your configs again later: `npm run setup -- --print`. If anything seems off, run **`npm run doctor`**. In a few seconds it checks Node, your `.env`, the bridge and WhatsApp session, the relay and the Claude doorway, and says what to fix.
+
+### Several WhatsApp profiles
+
+One Relay can hold up to 10 WhatsApp accounts, for example personal and work. In the dashboard, open the profile menu next to the connection status and choose **＋ Add another WhatsApp…**, name it, and scan the QR code with that phone. Switch between profiles from the same menu, and use **⋯** to rename or remove one.
+
+- Each profile is its own linked device with its own folder (`data/profiles/<id>/`): login, messages and media are never shared. The first profile ("Main") keeps the original data folder, so existing installs need no migration.
+- **One AI connection reaches all of them.** Every tool takes an optional `profile` (a name or id), and `list_profiles` shows what's linked. Without `profile`, tools use Main. For example: *"Check my Work WhatsApp for anything urgent."*
+- Removing a profile unlinks Relay from that WhatsApp account and deletes its synced data from this computer; the phone keeps everything. Main can be renamed but not removed.
 
 ### Dashboard sign-in
 
@@ -338,7 +346,7 @@ Before release, the full path (a Claude-style MCP client → Cloudflare doorway 
 | Check | Result |
 | --- | --- |
 | Wrong `x-api-key` | rejected (401) |
-| `initialize`, `tools/list` | 37 tools |
+| `initialize`, `tools/list` | 38 tools |
 | Tool call round trip (`status`, `list_chats`, `send_message`, `search_messages`) | ~0.4–0.8 s each |
 | Same `send_message` `requestId` sent twice | one message |
 | Primary frozen (like a closed laptop lid) | standby took over after **4.0 s** and **5.3 s** in two runs; a request already claimed by the frozen primary was handed over and answered in 5.8 s |

@@ -16,7 +16,8 @@ test('dashboard loads media only on request, safely previews it, and releases it
   w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};
   w.HTMLDialogElement.prototype.close=function(){if(this.open){this.open=false;this.dispatchEvent(new w.Event('close'));}};
   w.HTMLMediaElement.prototype.pause=()=>{};
-  w.fetch=async(url,options={})=>{
+  w.fetch=async(rawUrl,options={})=>{
+    const url=rawUrl.replace(/[?&]profile=main$/,''); // every dashboard request names its WhatsApp profile
     if(url.startsWith('/api/events'))return new Response(new ReadableStream({start(controller){options.signal.addEventListener('abort',()=>controller.close(),{once:true});}}));
     if(url.startsWith('/api/media/')){assert.equal(options.headers.Authorization,'Bearer test-owner');return new Response('photo',{headers:{'Content-Type':'image/png'}});}
     let result;

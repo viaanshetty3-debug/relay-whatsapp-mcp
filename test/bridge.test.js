@@ -169,7 +169,7 @@ test('official MCP HTTP client initializes and calls tools on the running endpoi
   const {base,config}=await httpFixture(t);const client=new Client({name:'http-integration',version:'1.0.0'});
   const transport=new StreamableHTTPClientTransport(new URL(base+'/mcp'),{requestInit:{headers:{Authorization:'Bearer '+config.token}}});
   await client.connect(transport);t.after(()=>client.close());
-  assert.equal((await client.listTools()).tools.length,37);
+  assert.equal((await client.listTools()).tools.length,38);
   const result=await client.callTool({name:'status',arguments:{}});assert.equal(JSON.parse(result.content[0].text).state,'connected');
 });
 test('owner can revoke a remote client and invalidate all its issued tokens',async t=>{

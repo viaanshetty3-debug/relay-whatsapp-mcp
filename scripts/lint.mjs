@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // `npm run lint`: syntax-checks every JavaScript file (no extra dependencies)
-// and makes sure the bridge and relay agree on the 37-tool catalog.
+// and makes sure the bridge and relay agree on the tool catalog (see scripts/tool-catalog.mjs).
 import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
@@ -26,9 +26,11 @@ for (const file of files) {
 
 const catalog = JSON.parse(readFileSync(join(root, 'relay-worker', 'src', 'lib', 'whatsapp-tools.json'), 'utf8')).map(t => t.name).sort();
 const source = readFileSync(join(root, 'src', 'tools.js'), 'utf8');
-const bridge = [...source.matchAll(/\badd\('([a-z_]+)'/g)].map(m => m[1]).sort();
+const bridge = [...[...source.matchAll(/\badd\('([a-z_]+)'/g)].map(m => m[1]), 'list_profiles'].sort(); // list_profiles: src/profiles.js
 const missing = catalog.filter(n => !bridge.includes(n)), extra = bridge.filter(n => !catalog.includes(n));
 if (missing.length || extra.length) { failed++; console.error('✗ tool catalogs differ. Relay only: ' + missing.join(', ') + ' | bridge only: ' + extra.join(', ')); }
 
+try { execFileSync(process.execPath, [join(root, 'scripts', 'tool-catalog.mjs'), '--check'], { stdio: 'pipe' }); }
+catch (error) { failed++; console.error(String(error.stderr || error.message)); }
 console.log(`${failed ? '✗' : '✓'} ${files.length} files syntax-checked; bridge and relay share ${catalog.length} tools`);
 process.exitCode = failed ? 1 : 0;

@@ -14,9 +14,9 @@ test('a forged ChatGPT Sites owner header is ignored on a standalone worker',asy
   assert.equal((await worker.fetch(list({'OAI-Authenticated-User-Email':'owner@example.test'}),e)).status,403);
   assert.equal(withoutHostAuth(list({'oai-authenticated-user-email':'x','x-relay-client-key':'k'})).headers.get('oai-authenticated-user-email'),null);
 });
-test('clients with the relay client key get all 37 tools',async()=>{
+test('clients with the relay client key get all 38 tools',async()=>{
   const e=env();const r=await worker.fetch(list({'X-Relay-Client-Key':e.WA_CLIENT_KEY}),e);
-  assert.equal(r.status,200);assert.equal((await r.json()).result.tools.length,37);
+  assert.equal(r.status,200);assert.equal((await r.json()).result.tools.length,38);
   assert.equal((await worker.fetch(list({'X-Relay-Client-Key':'wrong'}),e)).status,403);
 });
 test('health and unknown paths',async()=>{

@@ -29,14 +29,14 @@ function fixture(t,options={}){
   const owner=body=>broker.handle(request('/mcp',body,{'oai-authenticated-user-email':'owner@example.test'}));
   return {db,env,catalog,broker,request,owner};
 }
-test('private relay discovery exposes all 37 real schemas and rejects unauthorized accounts',async t=>{
+test('private relay discovery exposes all 38 real schemas and rejects unauthorized accounts',async t=>{
   const {broker,request,owner,catalog,env}=fixture(t);
   assert.equal((await broker.handle(request('/mcp',{jsonrpc:'2.0',id:1,method:'tools/list'}))).status,403);
   assert.equal((await broker.handle(request('/mcp',{jsonrpc:'2.0',id:1,method:'tools/list'},{'oai-authenticated-user-email':'someone-else@example.test'}))).status,403);
-  const result=await (await owner({jsonrpc:'2.0',id:1,method:'tools/list'})).json();assert.equal(result.result.tools.length,37);assert.deepEqual(result.result.tools,catalog);
+  const result=await (await owner({jsonrpc:'2.0',id:1,method:'tools/list'})).json();assert.equal(result.result.tools.length,38);assert.deepEqual(result.result.tools,catalog);
   assert.ok(result.result.tools.find(t=>t.name==='analyze_media').inputSchema.properties.mode.enum.includes('cache'));
   const claude=await broker.handle(request('/mcp',{jsonrpc:'2.0',id:2,method:'tools/list'},{'X-Relay-Client-Key':env.WA_CLIENT_KEY}));assert.equal(claude.status,200);
-  const external=await broker.handle(request('/whatsapp/mcp',{jsonrpc:'2.0',id:3,method:'tools/list'},{'X-Relay-Client-Key':env.WA_CLIENT_KEY}));assert.equal(external.status,200);assert.equal((await external.json()).result.tools.length,37);
+  const external=await broker.handle(request('/whatsapp/mcp',{jsonrpc:'2.0',id:3,method:'tools/list'},{'X-Relay-Client-Key':env.WA_CLIENT_KEY}));assert.equal(external.status,200);assert.equal((await external.json()).result.tools.length,38);
   assert.equal((await owner(null)).status,400);
 });
 test('Mac agent and hosted relay forward a harmless MCP call with encrypted queue records and no duplicate execution',async t=>{
@@ -44,7 +44,7 @@ test('Mac agent and hosted relay forward a harmless MCP call with encrypted queu
   t.after(()=>rmSync(dir,{recursive:true,force:true}));let executions=0;
   const settings={remoteUrl:'https://relay.example.test',localUrl:'http://127.0.0.1:8787',agentKey:env.WA_AGENT_KEY,siteAccessKey:'test-site-key',agentId:randomUUID(),dataDir:dir};
   const agent=new RemoteAgent(settings,{log:()=>{},fetchImpl:async(url,options={})=>{
-    if(url.endsWith('/api/state'))return Response.json({state:'connected',tools:Array(37).fill({})});
+    if(url.endsWith('/api/state'))return Response.json({state:'connected',tools:Array(38).fill({})});
     if(url==='http://127.0.0.1:8787/mcp'){assert.equal(options.headers.Authorization,'Bearer test-owner-token');const body=JSON.parse(options.body);if(body.method==='initialize')return Response.json({jsonrpc:'2.0',id:body.id,result:{protocolVersion:'2025-11-25'}});executions++;return Response.json({jsonrpc:'2.0',id:body.id,result:{content:[{type:'text',text:'private fixture result'}]}});}
     assert.equal(options.headers['OAI-Sites-Authorization'],'Bearer test-site-key');return broker.handle(new Request(url,options));
   }});
@@ -59,7 +59,7 @@ test('Mac agent and hosted relay forward a harmless MCP call with encrypted queu
 test('only the configured agent can claim work; a second active agent is refused',async t=>{
   const {broker,request,env}=fixture(t);const first=randomUUID(),second=randomUUID();
   assert.equal((await broker.handle(request('/api/whatsapp/agent/poll',{agent:first},{}))).status,403);
-  assert.equal((await broker.handle(request('/api/whatsapp/agent/poll',{agent:first,bridge:{state:'connected',tools:37}},{Authorization:'Bearer '+env.WA_AGENT_KEY}))).status,200);
+  assert.equal((await broker.handle(request('/api/whatsapp/agent/poll',{agent:first,bridge:{state:'connected',tools:38}},{Authorization:'Bearer '+env.WA_AGENT_KEY}))).status,200);
   assert.equal((await broker.handle(request('/api/whatsapp/agent/poll',{agent:second,bridge:{state:'connected'}},{Authorization:'Bearer '+env.WA_AGENT_KEY}))).status,409);
 });
 test('timed-out requests are marked expired and never requeued for a possible duplicate send',async t=>{

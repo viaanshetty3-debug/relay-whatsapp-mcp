@@ -151,5 +151,7 @@ export class WhatsApp extends EventEmitter {
     catch(error){rmSync(destination,{force:true});throw error;}
     return {mimeType:media.mimetype||'application/octet-stream',filename:media.fileName||id,sizeBytes:size};
   }
+  // Unlinks this device from the WhatsApp account (used when a profile is removed).
+  async logout() {const sock=this.sock;if(sock&&this.state==='connected'){try{await sock.logout();}catch{}}await this.stop();}
   async stop() {this.stopped=true;clearTimeout(this.retry);const sock=this.sock;this.sock=null;sock?.end(new Error('Bridge stopped'));await this.credentialWrites;this.state='disconnected';this.qr=null;this.emit('status',this.status());}
 }
