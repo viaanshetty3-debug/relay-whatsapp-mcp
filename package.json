@@ -33,6 +33,8 @@
     "public/",
     "setup.mjs",
     "scripts/child-watchdog.mjs",
+    "scripts/connect.mjs",
+    "scripts/import-data-key.mjs",
     "scripts/doctor.mjs",
     "scripts/install-autostart.mjs",
     "scripts/relay-service.mjs",
