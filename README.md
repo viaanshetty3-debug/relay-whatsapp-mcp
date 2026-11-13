@@ -10,7 +10,18 @@
 [![Security policy](https://img.shields.io/badge/security-policy-green.svg)](SECURITY.md)
 [![npm](https://img.shields.io/npm/v/relay-whatsapp-mcp.svg)](https://www.npmjs.com/package/relay-whatsapp-mcp)
 
-**[💬 Ask Relay AI (Free Live Assistant)](https://relay-docs-ai.viaan-mcp.workers.dev)**: a help page with a searchable troubleshooting guide and an AI chat sidebar for questions about setup, failover, the 38 tools or security. It's free, with no login or key, and each visitor's chat stays private in their own browser. Answers come from these docs via Cloudflare Workers AI and can be wrong. If the free daily AI allowance runs out, it answers from a docs search instead.
+<p align="center"><img src="https://raw.githubusercontent.com/viaanshetty3-debug/relay-whatsapp-mcp/main/docs/dashboard-demo.gif" alt="The Relay dashboard in demo mode: an inbox of sample chats, opening a conversation, sending a reply, and adding a second WhatsApp profile called Work." width="820"></p>
+<p align="center"><sub>Demo mode with sample chats (<code>npx relay-whatsapp-mcp demo</code>). Your real chats never leave your computer.</sub></p>
+
+**Ask your AI things like:**
+- *"What did I miss in the family group today? Summarise it in three lines."*
+- *"Find the address Sam sent me last month."*
+- *"Transcribe the voice note from Priya and draft a reply. Don't send it yet."*
+- *"Check my Work WhatsApp for anything urgent."*
+
+**Why people use it:** free and self-hosted, works with Claude and ChatGPT, several WhatsApp accounts in one place, nothing sent without you asking, and a standby that takes over in seconds if your computer sleeps.
+
+**[💬 Ask Relay AI (Free Live Assistant)](https://relay-docs-ai.viaan-mcp.workers.dev)**: a help page with a searchable troubleshooting guide and an AI chat sidebar for questions about setup, failover, the 38 tools or security. It's free, with no login or key, and each visitor's chat stays private in their own browser. Answers come from these docs via Google Gemini (or Cloudflare Workers AI as a backup) and can be wrong. If the free daily AI allowance runs out, it answers from a docs search instead.
 
 ## Quickstart with npx
 
