@@ -1,9 +1,11 @@
-# Relay AI: free docs Q&A page on Cloudflare Workers AI (see README.md in this folder).
+# Relay Help: troubleshooting guide + free "Ask Relay AI" sidebar on Cloudflare Workers AI (see README.md in this folder).
 # Deploy: npx wrangler deploy   (needs a Cloudflare account; Workers Free plan is enough)
 name = "relay-docs-ai"
 main = "src/index.js"
 compatibility_date = "2026-10-01"
 workers_dev = true
+# The browser script is serialized from functions in src/page.js; keep the bundle free of __name() helpers.
+keep_names = false
 
 [ai]
 binding = "AI"
@@ -18,10 +20,9 @@ tag = "v1"
 new_sqlite_classes = ["RateLimiter"]
 
 [vars]
-MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+MODEL = "@cf/google/gemma-4-26b-a4b-it"
 DOCS_BASE = "https://raw.githubusercontent.com/viaanshetty3-debug/relay-whatsapp-mcp/main/"
-# Workers AI Free includes 10,000 neurons/day per account. One answer here costs roughly
-# 300 neurons (about 8k tokens of docs + the answer), so ~30 answers/day fit.
+# Workers AI Free includes 10,000 neurons/day per account; one answer here costs about
+# 90-100 neurons (measured), so roughly 100 AI answers/day. After that, and for a network
+# over its hourly limit, the chat answers from a docs search instead (no limit).
 HOURLY_LIMIT_PER_IP = "30"
-DAILY_LIMIT_PER_IP = "10"
-DAILY_LIMIT_TOTAL = "30"
