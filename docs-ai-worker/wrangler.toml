@@ -29,3 +29,6 @@ HOURLY_LIMIT_PER_IP = "30"
 # Optional, used first: Google Gemini Flash-Lite. Set the key as a secret (never in this file):
 #   npx wrangler secret put GEMINI_API_KEY
 # The cheapest current Flash-Lite model is picked automatically; set GEMINI_MODEL to override.
+# Optional, used after Gemini: Claude. Set the key as a secret:
+#   npx wrangler secret put ANTHROPIC_API_KEY
+# Defaults to claude-opus-5-5 at low effort; set CLAUDE_MODEL (e.g. claude-haiku-5-5) or CLAUDE_EFFORT to override.

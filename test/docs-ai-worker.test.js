@@ -230,6 +230,56 @@ test('gemini: used first when the key is set; key only in a header; falls back t
   } finally { globalThis.fetch = docsFetch; }
 });
 
+test('claude: used after Gemini fails, before Workers AI; falls back when credits run out', async () => {
+  const docsFetch = globalThis.fetch;
+  const seen = [];
+  let claudeStatus = 200;
+  globalThis.fetch = async (url, init = {}) => {
+    const u = String(url);
+    if (u.startsWith('https://generativelanguage.googleapis.com/')) return Response.json({ error: { message: 'billing' } }, { status: 403 });
+    if (!u.startsWith('https://api.anthropic.com/')) return docsFetch(url, init);
+    const headers = new Headers(init.headers);
+    seen.push({ url: u, key: headers.get('authorization'), beta: headers.get('anthropic-beta'), body: JSON.parse(init.body) });
+    if (claudeStatus !== 200) return Response.json({ type: 'error', error: { type: 'invalid_request_error', message: 'Your credit balance is too low' } }, { status: claudeStatus });
+    const enc = new TextEncoder();
+    const ev = (type, data) => enc.encode(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`);
+    return new Response(new ReadableStream({ start(c) {
+      c.enqueue(ev('message_start', { message: { id: 'msg_1', type: 'message', role: 'assistant', model: 'claude-opus-5-5', content: [], stop_reason: null, usage: { input_tokens: 1, output_tokens: 0 } } }));
+      c.enqueue(ev('content_block_start', { index: 0, content_block: { type: 'thinking', thinking: '', signature: '' } }));
+      c.enqueue(ev('content_block_stop', { index: 0 }));
+      c.enqueue(ev('content_block_start', { index: 1, content_block: { type: 'text', text: '' } }));
+      c.enqueue(ev('content_block_delta', { index: 1, delta: { type: 'text_delta', text: 'Use a ' } }));
+      c.enqueue(ev('content_block_delta', { index: 1, delta: { type: 'text_delta', text: 'standby device.' } }));
+      c.enqueue(ev('content_block_stop', { index: 1 }));
+      c.enqueue(ev('message_delta', { delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 5 } }));
+      c.enqueue(ev('message_stop', {}));
+      c.close();
+    } }), { headers: { 'Content-Type': 'text/event-stream' } });
+  };
+  try {
+    const env = makeEnv({ GEMINI_API_KEY: 'g-key', ANTHROPIC_API_KEY: 'test-anthropic-key' });
+    const res = await ask(env, question('What is failover?'));
+    assert.equal(res.headers.get('X-Relay-Engine'), 'claude');
+    assert.equal(await answerText(res), 'Use a standby device.');
+    const call = seen[0];
+    assert.equal(call.key, 'Bearer test-anthropic-key');
+    assert.ok(!call.url.includes('test-anthropic-key'), 'key is sent only as a header');
+    assert.equal(call.body.model, 'claude-opus-5-5');
+    assert.equal(call.body.stream, true);
+    assert.equal(call.body.fallbacks, 'default');
+    assert.match(call.beta, /server-side-fallback-2026-07-01/);
+    assert.deepEqual(call.body.system[0].cache_control, { type: 'ephemeral' });
+    assert.match(call.body.system[0].text, /<document name="README\.md">/);
+    assert.ok(!('temperature' in call.body), 'no sampling params (current models reject them)');
+    assert.equal(env.calls.length, 0, 'Workers AI not used');
+
+    claudeStatus = 400; // credits used up
+    const fallback = await ask(env, question('again'));
+    assert.equal(fallback.headers.get('X-Relay-Engine'), 'workers-ai');
+    assert.equal(env.calls.length, 1);
+  } finally { globalThis.fetch = docsFetch; }
+});
+
 test('docs search ranks the relevant section first', async () => {
   const sections = [...parseSections('README.md', README), ...parseTroubleshooting(README).items.map(i => ({ doc: 'README.md', title: i.symptom, anchor: 'troubleshooting', body: i.fix }))];
   assert.equal(searchDocs('port 8787 already in use', sections)[0].title, 'Port 8787 in use');

@@ -6,9 +6,12 @@
 //   This Worker stores no chats and logs no message text.
 // - Answers are grounded in README.md, SECURITY.md and server.json from the repo.
 // - Engines, in order: Google Gemini Flash-Lite (if the GEMINI_API_KEY secret is set),
-//   Cloudflare Workers AI, then a docs search.
+//   Claude (if the ANTHROPIC_API_KEY secret is set), Cloudflare Workers AI, then a docs search.
+//   Each engine is used until its provider refuses (credits used up, quota, outage); the
+//   next one takes over for that question automatically.
 // - Nobody gets a dead end: when the shared free AI allowance is used up, or one network
 //   asks too much in an hour, the chat answers from a search of the docs instead.
+import Anthropic from '@anthropic-ai/sdk';
 import { PAGE_CSS, PAGE_JS, REPO, renderPage } from './page.js';
 
 export const DOC_FILES = ['README.md', 'SECURITY.md', 'server.json'];
@@ -288,6 +291,48 @@ const aiResponse = (stream, engine) => new Response(stream, {
   headers: { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', 'X-Relay-Mode': 'ai', 'X-Relay-Engine': engine, ...SECURITY_HEADERS },
 });
 
+// ---------- Claude (optional, used after Gemini when ANTHROPIC_API_KEY is set) ----------
+
+export const CLAUDE_DEFAULT_MODEL = 'claude-opus-5-5';
+
+// Claude's stream events → the same `data: {"response": "..."}` events Workers AI sends.
+export function claudeToEvents(events) {
+  const encoder = new TextEncoder();
+  const send = (controller, text) => controller.enqueue(encoder.encode(`data: ${JSON.stringify({ response: text })}\n\n`));
+  return new ReadableStream({
+    async start(controller) {
+      try {
+        for await (const event of events) {
+          if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') send(controller, event.delta.text);
+          else if (event.type === 'message_delta' && event.delta.stop_reason === 'refusal') send(controller, '\n\nI can\'t answer that one. Try asking about setting up or running Relay.');
+        }
+      } catch (error) {
+        console.error('Claude stream error:', String(error?.message || error).slice(0, 200));
+        send(controller, '\n\n(The answer was cut off. Please ask again.)');
+      }
+      controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+      controller.close();
+    },
+  });
+}
+
+async function askClaude(env, system, messages) {
+  const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, maxRetries: 1, fetch: (...args) => fetch(...args) });
+  // Resolves once Claude accepts the request; a refusal to start (no credits, rate limit,
+  // outage) throws here, so the caller can hand the question to the next engine.
+  const events = await client.beta.messages.create({
+    model: env.CLAUDE_MODEL || CLAUDE_DEFAULT_MODEL,
+    max_tokens: 4000, // cost cap for a public chat; plenty for a docs answer
+    output_config: { effort: env.CLAUDE_EFFORT || 'low' },
+    system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }], // docs are the same for everyone → cached
+    messages,
+    stream: true,
+    betas: ['server-side-fallback-2026-07-01'],
+    fallbacks: 'default', // if Claude declines on policy grounds, Anthropic retries on a fallback model
+  });
+  return claudeToEvents(events);
+}
+
 // ---------- chat ----------
 
 async function chat(request, env, url) {
@@ -307,7 +352,11 @@ async function chat(request, env, url) {
   const system = systemPrompt(docs.prompt);
   if (env.GEMINI_API_KEY) {
     try { return aiResponse(await askGemini(env, system, messages), 'gemini'); }
-    catch (error) { console.error('Gemini error, using Workers AI:', String(error?.message || error).slice(0, 200)); }
+    catch (error) { console.error('Gemini error, trying the next engine:', String(error?.message || error).slice(0, 200)); }
+  }
+  if (env.ANTHROPIC_API_KEY) {
+    try { return aiResponse(await askClaude(env, system, messages), 'claude'); }
+    catch (error) { console.error('Claude error, using Workers AI:', String(error?.status || ''), String(error?.message || error).slice(0, 200)); }
   }
   let stream;
   try {
