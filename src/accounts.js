@@ -2,69 +2,22 @@
 // 5-digit emailed code) and a strong password, or sign in with Google, Microsoft, GitHub or Facebook.
 // One bridge serves one WhatsApp account, so it has exactly one owner: sign-up closes once the
 // account exists. The owner token still works for local MCP clients and as a recovery option.
-import { randomBytes, randomInt, scrypt as scryptCb, createHash } from 'node:crypto';
+import { randomBytes, randomInt, scrypt as scryptCb, createHash, createPublicKey, verify as verifySig } from 'node:crypto';
 import { promisify } from 'node:util';
 import express from 'express';
 import { equal } from './oauth.js';
+import { PROVIDERS } from './providers.js';
+export { PROVIDERS };
 
 const scrypt = promisify(scryptCb);
 const SCRYPT = { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
 const DAY = 86400000, CODE_TTL = 10 * 60000, CODE_TRIES = 5, SESSION_TTL = 30 * DAY;
 export const COOKIE = 'relay_session';
+// Relay Accounts (accounts-worker/) signs sign-in results with this Ed25519 key.
+export const ACCOUNTS_PUBLIC_KEY = 'MCowBQYDK2VwAyEAs94Kep38ad-15GUWSB1tXdRxMJuLGvRnDMpuANpdwt8';
 const digest = s => createHash('sha256').update(String(s)).digest('base64url');
 const secret = () => randomBytes(32).toString('base64url');
 const lower = s => String(s || '').trim().toLowerCase();
-
-export const PROVIDERS = {
-  google: {
-    name: 'Google', scope: 'openid email profile',
-    authorize: 'https://accounts.google.com/o/oauth2/v2/auth', token: 'https://oauth2.googleapis.com/token',
-    async profile({ id_token }) {
-      const c = claims(id_token);
-      return { id: c.sub, email: c.email, verified: c.email_verified === true, name: c.name };
-    },
-  },
-  microsoft: {
-    name: 'Microsoft', scope: 'openid email profile',
-    authorize: 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize', token: 'https://login.microsoftonline.com/common/oauth2/v2.0/token',
-    async profile({ id_token }) {
-      const c = claims(id_token);
-      // Work/school tenants let admins set any email, so only personal Microsoft accounts count as verified.
-      return { id: `${c.tid}:${c.oid || c.sub}`, email: c.email, verified: c.tid === '9188040d-6c67-4c5b-b112-36a304b66dad', name: c.name };
-    },
-  },
-  github: {
-    name: 'GitHub', scope: 'read:user user:email',
-    authorize: 'https://github.com/login/oauth/authorize', token: 'https://github.com/login/oauth/access_token',
-    async profile({ access_token }, fetchImpl) {
-      const headers = { Authorization: `Bearer ${access_token}`, Accept: 'application/vnd.github+json', 'User-Agent': 'relay-whatsapp-mcp' };
-      const user = await getJson(fetchImpl, 'https://api.github.com/user', headers);
-      const emails = await getJson(fetchImpl, 'https://api.github.com/user/emails', headers);
-      const primary = (emails || []).find(e => e.primary) || {};
-      return { id: String(user.id), email: primary.email, verified: primary.verified === true, name: user.name || user.login };
-    },
-  },
-  facebook: {
-    name: 'Facebook', scope: 'email,public_profile',
-    authorize: 'https://www.facebook.com/v21.0/dialog/oauth', token: 'https://graph.facebook.com/v21.0/oauth/access_token',
-    async profile({ access_token }, fetchImpl) {
-      const me = await getJson(fetchImpl, 'https://graph.facebook.com/v21.0/me?fields=id,name,email', { Authorization: `Bearer ${access_token}` });
-      // Facebook only returns an email address the person has confirmed.
-      return { id: me.id, email: me.email, verified: Boolean(me.email), name: me.name };
-    },
-  },
-};
-
-// ID tokens here come straight from the provider's token endpoint over TLS (code flow), so the
-// claims are trusted without a signature check, as OpenID Connect allows for this case.
-function claims(idToken) {
-  try { return JSON.parse(Buffer.from(String(idToken).split('.')[1], 'base64url').toString('utf8')); } catch { return {}; }
-}
-async function getJson(fetchImpl, url, headers) {
-  const res = await fetchImpl(url, { headers });
-  if (!res.ok) throw new Error(`${new URL(url).host}: HTTP ${res.status}`);
-  return res.json();
-}
 
 export function passwordProblems(password, { email = '', name = '' } = {}) {
   const p = String(password || ''), problems = [];
@@ -114,10 +67,29 @@ function cookieValue(req) {
   return null;
 }
 
-export function createMailer(config) {
+// Checks a Relay Accounts assertion: "payload.signature", both base64url, Ed25519 over the payload text.
+export function verifyAssertion(assertion, publicKey = ACCOUNTS_PUBLIC_KEY) {
+  try {
+    const [payload, sig] = String(assertion || '').split('.');
+    const key = createPublicKey({ key: Buffer.from(publicKey, 'base64url'), format: 'der', type: 'spki' });
+    if (!payload || !sig || !verifySig(null, Buffer.from(payload), key, Buffer.from(sig, 'base64url'))) return null;
+    return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+  } catch { return null; }
+}
+
+export function createMailer(config, fetchImpl = fetch) {
   if (config.mailer) return config.mailer; // tests
   const url = process.env.SMTP_URL;
-  if (!url) return null;
+  if (!url) {
+    if (!config.accountsUrl || config.demo) return null;
+    // Default: codes are emailed by the shared Relay Accounts service, so there's nothing to set up.
+    return {
+      async send({ to, code, purpose }) {
+        const res = await fetchImpl(`${config.accountsUrl}/email/code`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, code, purpose }), signal: AbortSignal.timeout(15000) });
+        if (!res.ok) { const j = await res.json().catch(() => ({})); const e = new Error(`Relay Accounts: HTTP ${res.status}`); e.userMessage = j.error; throw e; }
+      },
+    };
+  }
   let transport;
   return {
     async send({ to, subject, text }) {
@@ -128,8 +100,21 @@ export function createMailer(config) {
 }
 
 export function mountAccounts(app, config, store) {
-  const mailer = createMailer(config);
   const fetchImpl = config.fetch || fetch;
+  const mailer = createMailer(config, fetchImpl);
+  const accountsKey = config.accountsPublicKey || process.env.RELAY_ACCOUNTS_PUBLIC_KEY || ACCOUNTS_PUBLIC_KEY;
+  let brokerCache = { at: 0, list: [] };
+  async function brokerProviders() {
+    if (!config.accountsUrl) return [];
+    if (Date.now() - brokerCache.at < (brokerCache.list.length ? 10 * 60000 : 60000)) return brokerCache.list;
+    try {
+      const res = await fetchImpl(`${config.accountsUrl}/providers`, { signal: AbortSignal.timeout(3000) });
+      const list = res.ok ? (await res.json()).filter(p => PROVIDERS[p?.id]).map(p => p.id) : [];
+      brokerCache = { at: Date.now(), list };
+    } catch { brokerCache = { at: Date.now(), list: [] }; }
+    return brokerCache.list;
+  }
+  const directProviders = () => Object.keys(PROVIDERS).filter(id => (config.providers ? config.providers[id] : providerConfig(id)));
   const secureCookie = new URL(config.base).protocol === 'https:';
   const localBase = ['127.0.0.1', 'localhost', '[::1]'].includes(new URL(config.base).hostname);
   // Sign-in providers redirect back to http://localhost on a local bridge (every provider accepts it).
@@ -139,7 +124,8 @@ export function mountAccounts(app, config, store) {
     const clientId = process.env[`${up}_CLIENT_ID`], clientSecret = process.env[`${up}_CLIENT_SECRET`];
     return clientId && clientSecret ? { ...PROVIDERS[id], clientId, clientSecret } : null;
   };
-  const enabledProviders = () => Object.keys(PROVIDERS).filter(id => (config.providers ? config.providers[id] : providerConfig(id)));
+  // Your own OAuth apps (in .env) take over from the shared Relay Accounts service.
+  const enabledProviders = async () => (directProviders().length ? directProviders() : brokerProviders());
   const getProvider = id => (config.providers ? (config.providers[id] && { ...PROVIDERS[id], ...config.providers[id] }) : providerConfig(id));
 
   const owner = () => store.kv('account:owner');
@@ -194,12 +180,13 @@ export function mountAccounts(app, config, store) {
   async function sendCode(email, purpose) {
     const code = String(randomInt(0, 100000)).padStart(5, '0');
     const what = purpose === 'reset' ? 'reset your Relay password' : 'confirm your email for Relay';
-    if (mailer) await mailer.send({ to: email, subject: `Your Relay code: ${code}`, text: `Use this code to ${what}: ${code}\n\nIt expires in 10 minutes. If you didn't ask for it, ignore this email.` });
+    if (mailer) await mailer.send({ to: email, code, purpose, subject: `Your Relay code: ${code}`, text: `Use this code to ${what}: ${code}\n\nIt expires in 10 minutes. If you didn't ask for it, ignore this email.` });
     return code;
   }
   const codeRecord = (code, extra) => ({ ...extra, codeHash: digest(code), expires: Date.now() + CODE_TTL, tries: 0 });
   const demoCode = code => (config.demo && !mailer ? { demoCode: code } : {});
-  const noMail = r => r.status(503).json({ error: 'Email sending is not set up yet, so Relay cannot send your code. Run `npx relay-whatsapp-mcp setup` and choose email, or set SMTP_URL in .env.' });
+  const noMail = r => r.status(503).json({ error: 'Relay can\'t send email codes here: set SMTP_URL in .env (see README), or use a sign-in button.' });
+  const mailError = (r, e) => { console.error('Email error:', String(e?.message || e).slice(0, 200)); r.status(502).json({ error: e?.userMessage || 'Relay could not send the email. Try again in a minute.' }); };
 
   function checkCode(record, code) {
     if (!record || record.expires < Date.now()) return 'That code has expired. Ask for a new one.';
@@ -211,11 +198,11 @@ export function mountAccounts(app, config, store) {
   const router = express.Router();
   router.use(express.json({ limit: '16kb' }));
 
-  router.get('/status', (req, res) => {
-    const o = owner();
+  router.get('/status', async (req, res) => {
+    const o = owner(), providers = await enabledProviders();
     res.json({
       hasAccount: Boolean(o), signedIn: sessionValid(req), email: sessionValid(req) ? o.email : undefined,
-      name: sessionValid(req) ? o.fullName : undefined, providers: enabledProviders().map(id => ({ id, name: PROVIDERS[id].name })),
+      name: sessionValid(req) ? o.fullName : undefined, providers: providers.map(id => ({ id, name: PROVIDERS[id].name })),
       emailReady: Boolean(mailer) || Boolean(config.demo), hostedSetup: !localBase && !o,
     });
   });
@@ -239,7 +226,7 @@ export function mountAccounts(app, config, store) {
       const code = await sendCode(profile.email, 'verify');
       store.kv('account:pending', codeRecord(code, { profile, passwordHash }));
       res.json({ ok: true, verify: true, email: profile.email, ...demoCode(code) });
-    } catch (e) { console.error('Email error:', String(e?.message || e).slice(0, 200)); res.status(502).json({ error: 'Relay could not send the email. Check the email settings and try again.' }); }
+    } catch (e) { mailError(res, e); }
   });
 
   router.post('/verify', (req, res) => {
@@ -260,9 +247,11 @@ export function mountAccounts(app, config, store) {
     if (!record || email !== lower(req.body.email)) return res.json({ ok: true }); // don't reveal anything
     if (!mailer && !config.demo) return noMail(res);
     if (record.sentAt && Date.now() - record.sentAt < 30000) return res.status(429).json({ error: 'Wait 30 seconds before asking for another code.' });
-    const code = await sendCode(email, req.body.purpose);
-    store.kv(kind, { ...record, ...codeRecord(code, {}), sentAt: Date.now() });
-    res.json({ ok: true, ...demoCode(code) });
+    try {
+      const code = await sendCode(email, req.body.purpose);
+      store.kv(kind, { ...record, ...codeRecord(code, {}), sentAt: Date.now() });
+      res.json({ ok: true, ...demoCode(code) });
+    } catch (e) { mailError(res, e); }
   });
 
   router.post('/login', async (req, res) => {
@@ -286,9 +275,11 @@ export function mountAccounts(app, config, store) {
     const o = owner();
     if (!mailer && !config.demo) return noMail(res);
     if (!o || lower(req.body.email) !== o.email) return res.json({ ok: true }); // same answer either way
-    const code = await sendCode(o.email, 'reset');
-    store.kv('account:reset', codeRecord(code, { email: o.email, sentAt: Date.now() }));
-    res.json({ ok: true, ...demoCode(code) });
+    try {
+      const code = await sendCode(o.email, 'reset');
+      store.kv('account:reset', codeRecord(code, { email: o.email, sentAt: Date.now() }));
+      res.json({ ok: true, ...demoCode(code) });
+    } catch (e) { mailError(res, e); }
   });
 
   router.post('/reset/confirm', async (req, res) => {
@@ -305,28 +296,37 @@ export function mountAccounts(app, config, store) {
   });
 
   // ----- sign in with a provider -----
-  router.get('/oauth/:provider', (req, res) => {
-    const p = getProvider(req.params.provider);
-    if (!p) return res.status(404).send('That sign-in option is not set up on this bridge.');
-    if (localBase && req.headers.host !== new URL(oauthBase).host) return res.redirect(302, `${oauthBase}/auth/oauth/${req.params.provider}`);
+  router.get('/oauth/:provider', async (req, res) => {
+    const id = req.params.provider, p = getProvider(id);
+    if (!p) {
+      // Shared Relay Accounts service: it holds the OAuth apps and signs the result for this bridge.
+      if (!PROVIDERS[id] || !(await brokerProviders()).includes(id)) return res.status(404).send('That sign-in option is not set up on this bridge.');
+      const nonce = secret(), returnTo = `${localBase ? `http://${req.headers.host}` : config.base}/auth/broker/callback`;
+      pendingSocial.set(nonce, { provider: id, broker: true, returnTo, expires: Date.now() + 15 * 60000 });
+      const to = new URL(`${config.accountsUrl}/oauth/start`);
+      to.search = new URLSearchParams({ provider: id, return_to: returnTo, nonce }).toString();
+      return res.redirect(302, to.href);
+    }
+    if (localBase && req.headers.host !== new URL(oauthBase).host) return res.redirect(302, `${oauthBase}/auth/oauth/${id}`);
     const state = secret(), verifier = secret();
-    pendingSocial.set(state, { provider: req.params.provider, verifier, expires: Date.now() + 10 * 60000 });
+    pendingSocial.set(state, { provider: id, verifier, expires: Date.now() + 10 * 60000 });
     const url = new URL(p.authorize);
     url.search = new URLSearchParams({
-      client_id: p.clientId, redirect_uri: `${oauthBase}/auth/callback/${req.params.provider}`, response_type: 'code', scope: p.scope, state,
+      client_id: p.clientId, redirect_uri: `${oauthBase}/auth/callback/${id}`, response_type: 'code', scope: p.scope, state,
       code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256',
-      ...(req.params.provider === 'google' ? { prompt: 'select_account' } : {}),
+      ...(id === 'google' ? { prompt: 'select_account' } : {}),
     }).toString();
     res.redirect(302, url.href);
   });
 
+  const back = (res, msg) => res.redirect(302, `/?auth_error=${encodeURIComponent(msg)}`);
+
   router.get('/callback/:provider', async (req, res) => {
-    const back = (msg) => res.redirect(302, `/?auth_error=${encodeURIComponent(msg)}`);
     const pending = pendingSocial.get(String(req.query.state || ''));
-    if (!pending || pending.provider !== req.params.provider || pending.expires < Date.now()) return back('That sign-in expired. Try again.');
+    if (!pending || pending.broker || pending.provider !== req.params.provider || pending.expires < Date.now()) return back(res, 'That sign-in expired. Try again.');
     pendingSocial.delete(String(req.query.state));
     const p = getProvider(req.params.provider);
-    if (!p || !req.query.code) return back('Sign-in was cancelled.');
+    if (!p || !req.query.code) return back(res, 'Sign-in was cancelled.');
     let profile;
     try {
       const tokenRes = await fetchImpl(p.token, {
@@ -337,24 +337,41 @@ export function mountAccounts(app, config, store) {
       profile = await p.profile(await tokenRes.json(), fetchImpl);
     } catch (e) {
       console.error(`${p.name} sign-in error:`, String(e?.message || e).slice(0, 200));
-      return back(`${p.name} sign-in failed. Try again.`);
+      return back(res, `${p.name} sign-in failed. Try again.`);
     }
-    if (!profile?.id) return back(`${p.name} did not return an account.`);
+    finishSocial(req, res, req.params.provider, profile);
+  });
+
+  // Result from the Relay Accounts service: a signed assertion bound to this bridge's request.
+  router.get('/broker/callback', (req, res) => {
+    const claims = req.query.assertion ? verifyAssertion(req.query.assertion, accountsKey) : null;
+    const pending = claims && pendingSocial.get(String(claims.nonce || ''));
+    if (req.query.error && !req.query.assertion) return back(res, String(req.query.error).slice(0, 200));
+    if (!claims) { failed(req); return back(res, 'That sign-in could not be verified. Try again.'); }
+    if (!pending?.broker || pending.expires < Date.now() || claims.provider !== pending.provider || claims.aud !== pending.returnTo || !(claims.exp > Date.now())
+        || (config.accountsUrl && claims.iss !== new URL(config.accountsUrl).origin)) return back(res, 'That sign-in expired. Try again.');
+    pendingSocial.delete(String(claims.nonce));
+    finishSocial(req, res, claims.provider, { id: claims.id, email: claims.email, verified: claims.verified === true, name: claims.name });
+  });
+
+  function finishSocial(req, res, providerId, profile) {
+    const name = PROVIDERS[providerId].name;
+    if (!profile?.id) return back(res, `${name} did not return an account.`);
     const o = owner();
     if (o) {
-      const linked = o.providers?.[req.params.provider] === profile.id;
+      const linked = o.providers?.[providerId] === String(profile.id);
       const sameEmail = profile.verified && lower(profile.email) === o.email;
-      if (!linked && !sameEmail) { failed(req); return back(`This ${p.name} account isn't the one that owns this bridge.`); }
-      if (!linked) store.kv('account:owner', { ...o, providers: { ...o.providers, [req.params.provider]: profile.id } });
+      if (!linked && !sameEmail) { failed(req); return back(res, `This ${name} account isn't the one that owns this bridge.`); }
+      if (!linked) store.kv('account:owner', { ...o, providers: { ...o.providers, [providerId]: String(profile.id) } });
       startSession(res); return res.redirect(302, '/');
     }
     // No account yet: finish signing up with the name and verified email from the provider.
-    if (maySignUp(req, {})) return back('Create the account on the computer running Relay.');
-    if (!profile.verified || !profile.email) return back(`${p.name} didn't share a verified email. Sign up with your email instead.`);
+    if (maySignUp(req, {})) return back(res, 'Create the account on the computer running Relay.');
+    if (!profile.verified || !profile.email) return back(res, `${name} didn't share a verified email. Sign up with your email instead.`);
     const ticket = secret();
-    pendingSocial.set(`ticket:${ticket}`, { provider: req.params.provider, id: profile.id, email: lower(profile.email), name: profile.name, expires: Date.now() + 15 * 60000 });
+    pendingSocial.set(`ticket:${ticket}`, { provider: providerId, id: String(profile.id), email: lower(profile.email), name: profile.name, expires: Date.now() + 15 * 60000 });
     res.redirect(302, `/?signup=${encodeURIComponent(ticket)}`);
-  });
+  }
 
   router.get('/ticket/:ticket', (req, res) => {
     const t = pendingSocial.get(`ticket:${req.params.ticket}`);

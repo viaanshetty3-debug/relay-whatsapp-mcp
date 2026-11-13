@@ -133,8 +133,9 @@ The first time you open the dashboard, you create the bridge's owner account:
 After that you sign in with your email and password, or with **Google, Microsoft, GitHub or Facebook** if they're set up. **Forgot password?** emails a code to reset it.
 
 - **One owner per bridge:** a bridge reads one WhatsApp account, so sign-up closes once the account exists. A local bridge only allows sign-up from the computer it runs on. A hosted bridge (`PUBLIC_URL`) also asks for the owner token once, so a stranger can't claim it first.
-- **Sending codes:** `setup` asks for a Gmail address and a [Google app password](https://myaccount.google.com/apppasswords), which needs 2-Step Verification. It stores them as `SMTP_URL` in `.env`. Any other SMTP server works too. In demo mode, codes are shown on screen.
-- **Sign-in buttons:** create an OAuth app with each provider and add its `*_CLIENT_ID` and `*_CLIENT_SECRET` to `.env`. Use the redirect URL `http://localhost:8787/auth/callback/<google|microsoft|github|facebook>`, or your `PUBLIC_URL` instead of `http://localhost:8787`. A provider signs you in only if it's linked to the owner account or reports the same verified email. Microsoft emails count as verified only for personal accounts.
+- **Nothing to set up:** codes are emailed, and the sign-in buttons run, through the shared **Relay Accounts** service (`accounts-worker/`, a Cloudflare Worker). It sees only the email address, the code and which provider you used, never your password, and it stores no accounts. The account itself lives only on your bridge. The service sends your bridge back a short-lived Ed25519-signed answer, which the bridge checks with a public key built into Relay. In demo mode, codes are shown on screen.
+- **Running it all yourself:** set `SMTP_URL` (any SMTP server) to send codes yourself, and/or add your own `*_CLIENT_ID` and `*_CLIENT_SECRET` for each provider with the redirect URL `http://localhost:8787/auth/callback/<google|microsoft|github|facebook>` (or your `PUBLIC_URL`). `RELAY_ACCOUNTS_URL=off` turns the shared service off completely.
+- **Which sign-ins count:** a provider signs you in only if it's linked to the owner account or reports the same verified email. Microsoft emails count as verified only for personal accounts.
 - **Security:** passwords are stored with scrypt. Sessions are HttpOnly cookies that last 30 days, and resetting the password signs out every other session. Ten wrong passwords lock sign-in for 15 minutes, and five wrong codes void a code.
 - **The owner token still exists** for local MCP clients and adapters, and as a recovery sign-in under **Use the owner token instead**. AI clients connecting with OAuth (such as ChatGPT) are approved by the signed-in account.
 
@@ -260,8 +261,9 @@ The bridge also exposes the resource `whatsapp://recent` (recent permitted messa
 | --- | --- | --- |
 | `HOST` / `PORT` | `127.0.0.1` / `8787` | Where the local bridge listens |
 | `BRIDGE_TOKEN` | generated | Owner token for local MCP clients, and a recovery sign-in for the dashboard (≥ 32 characters) |
-| `SMTP_URL` / `MAIL_FROM` | unset | Email server for sign-in codes (`setup` fills these from a Gmail app password) |
-| `GOOGLE_`/`MICROSOFT_`/`GITHUB_`/`FACEBOOK_CLIENT_ID` and `_CLIENT_SECRET` | unset | Optional "Sign in with…" buttons |
+| `RELAY_ACCOUNTS_URL` | `https://relay-accounts.viaan-mcp.workers.dev` | Shared service that emails sign-in codes and runs the sign-in buttons; `off` disables it |
+| `SMTP_URL` / `MAIL_FROM` | unset | Your own email server for sign-in codes (used instead of the shared service) |
+| `GOOGLE_`/`MICROSOFT_`/`GITHUB_`/`FACEBOOK_CLIENT_ID` and `_CLIENT_SECRET` | unset | Your own OAuth apps for the sign-in buttons (used instead of the shared service) |
 | `AUTO_CONNECT` | `true` with `npm run service` | Reconnect a saved WhatsApp session on start |
 | `READ_ONLY` | `false` | Block every outgoing action, draft change and schedule |
 | `ALLOWED_CHATS` | all chats | Comma-separated chat JIDs the AI may access |

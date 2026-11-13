@@ -25,5 +25,6 @@ export function config(demo=process.argv.includes('--demo')) {
   if(url.pathname!=='/' || url.search || url.hash || url.username || url.password) throw new Error('PUBLIC_URL must be an origin, without a path, credentials, query or fragment');
   if(production && url.protocol!=='https:')throw new Error('Production requires an HTTPS PUBLIC_URL or a host-provided public domain');
   if(url.protocol!=='https:' && !['localhost','127.0.0.1','[::1]'].includes(url.hostname)) throw new Error('A public URL requires HTTPS');
-  return {dir,token,port,production,autoConnect:process.env.AUTO_CONNECT==='true',host:process.env.HOST || (production?'0.0.0.0':'127.0.0.1'),base:url.origin,demo,readOnly:process.env.READ_ONLY==='true',allowed:new Set((process.env.ALLOWED_CHATS||'').split(',').map(s=>s.trim()).filter(Boolean))};
+  const accountsUrl=process.env.RELAY_ACCOUNTS_URL==='off'?null:(process.env.RELAY_ACCOUNTS_URL||'https://relay-accounts.viaan-mcp.workers.dev').replace(/\/+$/,'');
+  return {dir,token,port,production,accountsUrl,autoConnect:process.env.AUTO_CONNECT==='true',host:process.env.HOST || (production?'0.0.0.0':'127.0.0.1'),base:url.origin,demo,readOnly:process.env.READ_ONLY==='true',allowed:new Set((process.env.ALLOWED_CHATS||'').split(',').map(s=>s.trim()).filter(Boolean))};
 }

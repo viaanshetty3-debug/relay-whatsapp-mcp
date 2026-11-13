@@ -1,0 +1,23 @@
+name = "relay-accounts"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+workers_dev = true
+keep_names = false
+
+[[durable_objects.bindings]]
+name = "STORE"
+class_name = "AccountsStore"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["AccountsStore"]
+
+[vars]
+DAILY_EMAIL_LIMIT = "450"
+# Client IDs are public; add each provider's ID here once its OAuth app exists:
+# GOOGLE_CLIENT_ID = "..."
+# MICROSOFT_CLIENT_ID = "..."
+GITHUB_CLIENT_ID = "Ov23liBHCVu0DwQN3ILV"
+# FACEBOOK_CLIENT_ID = "..."
+# Secrets (npx wrangler secret put NAME): SENDER_EMAIL (the Gmail that sends codes), ACCOUNTS_SIGNING_KEY, STATE_KEY,
+# GOOGLE_CLIENT_SECRET, MICROSOFT_CLIENT_SECRET, GITHUB_CLIENT_SECRET, FACEBOOK_CLIENT_SECRET

@@ -121,7 +121,7 @@ test('without email set up, a real bridge explains how to fix it', async t => {
   const { call } = await start(t, { demo: false });
   assert.equal((await call('/auth/status')).json.emailReady, false);
   const r = await call('/auth/signup', { body: PROFILE });
-  assert.equal(r.status, 503); assert.match(r.json.error, /setup/);
+  assert.equal(r.status, 503); assert.match(r.json.error, /SMTP_URL/);
 });
 
 test('a hosted bridge needs the owner token to create the first account', async t => {
@@ -254,4 +254,65 @@ test('dashboard: create account, verify the demo code, open the workspace, sign 
   await until(() => !$('#workspace').hidden, 'sign in failed');
   assert.deepEqual(errors, []);
   $('#logout').click(); await sleep(50);
+});
+
+test('sign in through the Relay Accounts service: only a correctly signed, matching assertion is accepted', async t => {
+  const { generateKeyPairSync, sign } = await import('node:crypto');
+  const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+  const pub = publicKey.export({ type: 'spki', format: 'der' }).toString('base64url');
+  const assertion = (claims, key = privateKey) => {
+    const payload = Buffer.from(JSON.stringify(claims)).toString('base64url');
+    return payload + '.' + sign(null, Buffer.from(payload), key).toString('base64url');
+  };
+  const mails = [];
+  const fakeFetch = async (url, init = {}) => {
+    if (String(url) === 'https://accounts.test/providers') return Response.json([{ id: 'google', name: 'Google' }, { id: 'evil', name: 'Evil' }]);
+    if (String(url) === 'https://accounts.test/email/code') { mails.push(JSON.parse(init.body)); return Response.json({ ok: true }); }
+    throw new Error('unexpected ' + url);
+  };
+  const { call, port, store } = await start(t, { demo: false, accountsUrl: 'https://accounts.test', accountsPublicKey: pub, fetch: fakeFetch });
+  assert.deepEqual((await call('/auth/status')).json.providers, [{ id: 'google', name: 'Google' }], 'unknown providers are ignored');
+  assert.equal((await call('/auth/status')).json.emailReady, true, 'codes are emailed by the service: nothing to set up');
+
+  async function begin() {
+    const r = await call('/auth/oauth/google');
+    const to = new URL(r.location);
+    assert.equal(to.origin + to.pathname, 'https://accounts.test/oauth/start');
+    assert.equal(to.searchParams.get('return_to'), `http://127.0.0.1:${port}/auth/broker/callback`);
+    return { nonce: to.searchParams.get('nonce'), aud: to.searchParams.get('return_to') };
+  }
+  const good = ({ nonce, aud }, extra = {}) => ({ iss: 'https://accounts.test', aud, nonce, provider: 'google', id: 'g-1', email: 'ada@example.com', verified: true, name: 'Ada Lovelace', iat: Date.now(), exp: Date.now() + 60000, ...extra });
+  const finish = a => call('/auth/broker/callback?assertion=' + encodeURIComponent(a));
+
+  // Forged, tampered, replayed, expired or mismatched assertions are refused.
+  const other = generateKeyPairSync('ed25519').privateKey;
+  let req = await begin();
+  assert.match(decodeURIComponent((await finish(assertion(good(req), other))).location), /could not be verified/);
+  const signed = assertion(good(req)); const [payload, sig] = signed.split('.');
+  const tampered = Buffer.from(JSON.stringify({ ...good(req), email: 'eve@example.com' })).toString('base64url') + '.' + sig;
+  assert.match(decodeURIComponent((await finish(tampered)).location), /could not be verified/);
+  assert.match(decodeURIComponent((await finish(assertion(good(req, { aud: 'http://127.0.0.1:1/auth/broker/callback' })))).location), /expired/);
+  assert.match(decodeURIComponent((await finish(assertion(good(req, { exp: Date.now() - 1 })))).location), /expired/);
+  assert.match(decodeURIComponent((await finish(assertion(good(req, { iss: 'https://evil.test' })))).location), /expired/);
+  assert.match(decodeURIComponent((await finish(assertion(good({ nonce: 'never-issued-nonce-xxxxxxxx', aud: req.aud })))).location), /expired/);
+  void payload;
+
+  // A good one starts sign-up with the verified Google email; it can't be used twice.
+  let r = await finish(signed);
+  const ticket = new URL(r.location, 'http://x').searchParams.get('signup');
+  assert.ok(ticket);
+  assert.match(decodeURIComponent((await finish(signed)).location), /expired/, 'no replay');
+  r = await call('/auth/signup', { body: { ...PROFILE, ticket } });
+  assert.equal(r.json.signedIn, true);
+  assert.equal(store.kv('account:owner').providers.google, 'g-1');
+  assert.equal(mails.length, 0, 'no code needed: Google verified the email');
+
+  // Later sign-ins go straight in; codes for a password reset go through the service.
+  await call('/auth/logout', { body: {} });
+  req = await begin();
+  r = await finish(assertion(good(req)));
+  assert.equal(r.location, '/'); assert.equal((await call('/api/state')).status, 200);
+  await call('/auth/reset/request', { body: { email: 'ada@example.com' } });
+  assert.equal(mails.length, 1); assert.equal(mails[0].to, 'ada@example.com'); assert.equal(mails[0].purpose, 'reset'); assert.match(mails[0].code, /^\d{5}$/);
+  assert.equal(Object.keys(mails[0]).sort().join(), 'code,purpose,to', 'only the address, code and purpose leave the bridge');
 });
