@@ -445,6 +445,8 @@ test('colab: answers first while the notebook checks in, and falls back when it 
     assert.equal(seen[0].url, 'https://a-b.trycloudflare.com/chat');
     assert.equal(seen[0].auth, 'Bearer ' + COLAB_KEY);
     assert.match(seen[0].body.system, /Relay/);
+    // A comparison request can skip Colab for one question.
+    assert.equal((await ask(env, { ...question('compare'), engine: 'default' })).headers.get('X-Relay-Engine'), 'workers-ai');
     // The notebook's model fails: the next engine answers the same question.
     colabOk = false;
     assert.equal((await ask(env, question('again'))).headers.get('X-Relay-Engine'), 'workers-ai');

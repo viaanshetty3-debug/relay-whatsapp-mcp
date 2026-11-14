@@ -406,7 +406,8 @@ async function chat(request, env, url) {
   const limit = await checkLimit(request, env);
   if (!limit.ok) return textStream(docsAnswer(question, docs.sections, { kind: 'ratelimit', retryAfter: limit.retryAfter }));
   const system = systemPrompt(docs.prompt);
-  if (env.COLAB_KEY && env.ENGINES) {
+  // `"engine": "default"` skips your own Colab model for one question (used to compare engines).
+  if (env.COLAB_KEY && env.ENGINES && parsed?.engine !== 'default') {
     try { const stream = await askColab(env, system, messages); if (stream) return aiResponse(stream, 'colab'); }
     catch (error) { console.error('Colab error, trying the next engine:', String(error?.message || error).slice(0, 200)); }
   }
