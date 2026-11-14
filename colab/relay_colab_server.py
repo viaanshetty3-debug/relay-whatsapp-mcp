@@ -50,7 +50,9 @@ async def chat(request: Request):
         "messages": [{"role": "system", "content": system}, *messages],
         "stream": True,
         "think": False,  # answer directly: much faster for a help chat
-        "options": {"temperature": 0.2, "num_predict": 800},
+        # Ollama reads only ~4k tokens by default and silently drops the rest; the help page's
+        # docs are ~11k tokens, so give the model room to read all of them.
+        "options": {"temperature": 0.2, "num_predict": 800, "num_ctx": int(os.environ.get("RELAY_NUM_CTX", "16384"))},
     }
     # Open the model's stream before answering, so a failure becomes an HTTP error the help page
     # can see (and hand the question to its next engine) instead of a half-sent answer.
