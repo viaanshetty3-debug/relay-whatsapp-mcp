@@ -243,14 +243,27 @@ async function colabEngine(request, env, url) {
 async function askColab(env, system, messages, now = Date.now()) {
   const entry = await (await registry(env).fetch('https://engines/colab')).json();
   if (!entry?.url || now - entry.seen > COLAB_FRESH_MS) return null;
-  const res = await fetch(entry.url + '/chat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + env.COLAB_KEY },
-    body: JSON.stringify({ system, messages }),
-    signal: AbortSignal.timeout(Number(env.COLAB_TIMEOUT_MS) || 20000),
-  });
-  if (!res.ok || !res.body) throw new Error(`Colab ${entry.model}: HTTP ${res.status}`);
-  return res.body; // already in the Workers AI event format
+  // After a failure, skip Colab until the notebook checks in again, so a stopped session
+  // costs at most one visitor one short wait.
+  if (entry.failedAt && entry.failedAt >= entry.seen) return null;
+  const limit = Number(env.COLAB_TIMEOUT_MS) || 20000, controller = new AbortController();
+  let timer;
+  try {
+    const res = await Promise.race([
+      fetch(entry.url + '/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + env.COLAB_KEY },
+        body: JSON.stringify({ system, messages }),
+        signal: controller.signal,
+      }),
+      new Promise((_, reject) => { timer = setTimeout(() => { controller.abort(); reject(new Error(`no answer within ${limit / 1000} s`)); }, limit); }),
+    ]);
+    if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+    return res.body; // already in the Workers AI event format
+  } catch (error) {
+    await registry(env).fetch('https://engines/colab', { method: 'PUT', body: JSON.stringify({ ...entry, failedAt: Date.now() }) });
+    throw new Error(`Colab ${entry.model}: ${error?.message || error}`);
+  } finally { clearTimeout(timer); }
 }
 
 async function sha256(text) {

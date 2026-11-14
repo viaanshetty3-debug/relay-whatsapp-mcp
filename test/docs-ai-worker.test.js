@@ -450,6 +450,23 @@ test('colab: answers first while the notebook checks in, and falls back when it 
     // The notebook's model fails: the next engine answers the same question.
     colabOk = false;
     assert.equal((await ask(env, question('again'))).headers.get('X-Relay-Engine'), 'workers-ai');
+    // After that failure Colab is skipped (no more waiting) until the notebook checks in again.
+    colabOk = true; seen.length = 0;
+    assert.equal((await ask(env, question('skip while broken'))).headers.get('X-Relay-Engine'), 'workers-ai');
+    assert.equal(seen.length, 0);
+    await register(env, { url: 'https://a-b.trycloudflare.com', model: 'qwen3.8:27b' });
+    assert.equal((await ask(env, question('back again'))).headers.get('X-Relay-Engine'), 'colab');
+    // A Colab that never answers is given up on after the time limit.
+    const hang = makeEnv({ COLAB_KEY, ENGINES: env.ENGINES, COLAB_TIMEOUT_MS: '200' });
+    globalThis.fetch = async (url, init = {}) => String(url).startsWith('https://a-b.trycloudflare.com') ? new Promise(() => {}) : docsFetch(url, init);
+    const t0 = Date.now();
+    assert.equal((await ask(hang, question('hang'))).headers.get('X-Relay-Engine'), 'workers-ai');
+    assert.ok(Date.now() - t0 < 2000, 'gave up quickly');
+    globalThis.fetch = async (url, init = {}) => {
+      if (String(url).startsWith('https://a-b.trycloudflare.com')) { seen.push({}); return new Response(sseStream(['x'])); }
+      return docsFetch(url, init);
+    };
+    await register(env, { url: 'https://a-b.trycloudflare.com', model: 'qwen3.8:27b' });
     // The notebook stopped checking in (Colab session ended): Colab isn't tried at all.
     colabOk = true; seen.length = 0;
     env.ENGINES.data.get('colab').seen -= COLAB_FRESH_MS + 1000;
