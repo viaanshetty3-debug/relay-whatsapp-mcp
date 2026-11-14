@@ -7,7 +7,8 @@
 // - Answers are grounded in README.md, SECURITY.md and server.json from the repo.
 // - Engines, in order: your own model on Google Colab while its notebook is running (if the
 //   COLAB_KEY secret is set; see colab/), Google Gemini Flash-Lite (if the GEMINI_API_KEY secret is set),
-//   Claude (if the ANTHROPIC_API_KEY secret is set), Cloudflare Workers AI, then a docs search.
+//   Claude (if the ANTHROPIC_API_KEY secret is set), Cloudflare Workers AI (only if the AI binding and MODEL
+//   are configured; off on the live help page), then a docs search.
 //   Each engine is used until its provider refuses (credits used up, quota, outage); the
 //   next one takes over for that question automatically.
 // - Nobody gets a dead end: when the shared free AI allowance is used up, or one network
@@ -432,6 +433,8 @@ async function chat(request, env, url) {
     try { return aiResponse(await askClaude(env, system, messages), 'claude'); }
     catch (error) { console.error('Claude error, using Workers AI:', String(error?.status || ''), String(error?.message || error).slice(0, 200)); }
   }
+  // Cloudflare Workers AI is optional: used only if the AI binding and MODEL are configured.
+  if (!env.AI || !env.MODEL) return textStream(docsAnswer(question, docs.sections, { kind: 'error' }));
   let stream;
   try {
     stream = await env.AI.run(env.MODEL, {

@@ -478,3 +478,14 @@ test('colab: answers first while the notebook checks in, and falls back when it 
     assert.equal((await ask(env, question('after stop'))).headers.get('X-Relay-Engine'), 'workers-ai');
   } finally { globalThis.fetch = docsFetch; }
 });
+
+test('without Workers AI configured, a Gemini outage falls back to the docs search', async () => {
+  const docsFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => String(url).includes('googleapis.com') ? new Response('down', { status: 503 }) : docsFetch(url, init);
+  try {
+    const env = makeEnv({ GEMINI_API_KEY: 'g', VERTEX_PROJECT: 'p', AI: undefined, MODEL: undefined });
+    const res = await ask(env, question('How do I add a standby?'));
+    assert.equal(res.headers.get('X-Relay-Engine'), null);
+    assert.match(await answerText(res), /standby/i);
+  } finally { globalThis.fetch = docsFetch; }
+});

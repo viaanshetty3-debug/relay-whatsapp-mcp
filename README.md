@@ -21,7 +21,7 @@
 
 **Why people use it:** free and self-hosted, works with Claude and ChatGPT, several WhatsApp accounts in one place, nothing sent without you asking, and a standby that takes over in seconds if your computer sleeps.
 
-**[💬 Ask Relay AI (Free Live Assistant)](https://relay-docs-ai.viaan-mcp.workers.dev)**: a help page with a searchable troubleshooting guide and an AI chat sidebar for questions about setup, failover, the 38 tools or security. It's free, with no login or key, and each visitor's chat stays private in their own browser. Answers come from these docs via Google Gemini (or Cloudflare Workers AI as a backup) and can be wrong. If the free daily AI allowance runs out, it answers from a docs search instead.
+**[💬 Ask Relay AI (Free Live Assistant)](https://relay-docs-ai.viaan-mcp.workers.dev)**: a help page with a searchable troubleshooting guide and an AI chat sidebar for questions about setup, failover, the 38 tools or security. It's free, with no login or key, and each visitor's chat stays private in their own browser. Answers come from these docs via Google Gemini and can be wrong. If Gemini isn't available, it answers from a docs search instead.
 
 ## Quickstart with npx
 

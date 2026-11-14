@@ -7,8 +7,9 @@ workers_dev = true
 # The browser script is serialized from functions in src/page.js; keep the bundle free of __name() helpers.
 keep_names = false
 
-[ai]
-binding = "AI"
+# Optional Cloudflare Workers AI engine (off): uncomment both lines below and MODEL further down.
+# [ai]
+# binding = "AI"
 
 # Rate-limit counters (SQLite-backed Durable Objects work on the Workers Free plan).
 [[durable_objects.bindings]]
@@ -28,7 +29,7 @@ tag = "v2"
 new_sqlite_classes = ["EngineRegistry"]
 
 [vars]
-MODEL = "@cf/google/gemma-4-26b-a4b-it"
+# MODEL = "@cf/google/gemma-4-26b-a4b-it"
 DOCS_BASE = "https://raw.githubusercontent.com/viaanshetty3-debug/relay-whatsapp-mcp/main/"
 # Workers AI Free includes 10,000 neurons/day per account; one answer here costs about
 # 90-100 neurons (measured), so roughly 100 AI answers/day. After that, and for a network

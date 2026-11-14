@@ -160,7 +160,7 @@ export function renderPage(guide) {
       <button id="send" type="submit">Send</button>
       <button id="stop" type="button" class="ghost" hidden>Stop</button>
     </form>
-    <p class="note"><span id="status"></span>Answers are generated from Relay's docs by Google Gemini or Cloudflare Workers AI and can be wrong. Questions are sent to those services (Google may use free-tier questions to improve its products). Your chat is saved only in this browser. Don't paste keys or private messages.</p>
+    <p class="note"><span id="status"></span>Answers are generated from Relay's docs by Google Gemini (or the maintainer's own model) and can be wrong. Questions are sent to those services (Google may use free-tier questions to improve its products). Your chat is saved only in this browser. Don't paste keys or private messages.</p>
   </div>
 </aside>
 <script src="/app.js?v=${ASSET_VERSION}"></script>
