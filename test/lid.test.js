@@ -102,3 +102,28 @@ test('encrypted edits (secretEncryptedMessage) are decrypted and applied, never 
   wa.repairStored();
   assert.equal(store.getMessage(group, 'old-row'), undefined);
 });
+
+test('@mentions show the person\'s name, not WhatsApp\'s hidden number', async t => {
+  const { store, wa, bridge } = await setup(t);
+  const group = '120363000000000002@g.us', priya = '169000000000777@lid', priyaPn = '6590000777@s.whatsapp.net';
+  const mention = (id, text, who) => ({ key: { remoteJid: group, id, fromMe: true }, messageTimestamp: 1794470000, message: { extendedTextMessage: { text, contextInfo: { mentionedJid: [who] } } } });
+  // Nobody known yet: the message keeps the number for now.
+  wa.ingest(mention('m1', '@169000000000777 can you give food to Ivana', priya));
+  assert.equal(store.getMessage(group, 'm1').text, '@169000000000777 can you give food to Ivana');
+  // Priya speaks in the group: her WhatsApp profile name is learned, and new mentions use it.
+  wa.ingest({ key: { remoteJid: group, id: 'p1', fromMe: false, participant: priya }, pushName: 'Priyanka', messageTimestamp: 1794470100, message: { conversation: 'ok' } });
+  wa.ingest(mention('m2', 'Thanks @169000000000777', priya));
+  assert.equal(store.getMessage(group, 'm2').text, 'Thanks @Priyanka');
+  assert.deepEqual(store.getMessage(group, 'm2').mentions, [{ id: priya, name: 'Priyanka' }]);
+  // Older messages are fixed too.
+  assert.equal(wa.repairMentions(), 1);
+  assert.equal(store.getMessage(group, 'm1').text, '@Priyanka can you give food to Ivana');
+  // A saved contact name wins once her phone number is known.
+  wa.learnLid(priya, priyaPn); store.put('contacts', { id: priyaPn, name: 'Priyanka Tamang' });
+  wa.ingest(mention('m3', '@169000000000777 hello', priya));
+  assert.equal(store.getMessage(group, 'm3').text, '@Priyanka Tamang hello');
+  // Someone with a known phone number but no name shows as +number, never the hidden ID.
+  wa.ingest(mention('m4', 'hi @6590000888', '6590000888@s.whatsapp.net'));
+  assert.equal(store.getMessage(group, 'm4').text, 'hi @+6590000888');
+  assert.equal((await bridge.call('get_messages', { chat: group })).find(m => m.id === 'm4').text, 'hi @+6590000888', 'the AI sees names too');
+});

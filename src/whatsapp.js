@@ -91,7 +91,7 @@ export class WhatsApp extends EventEmitter {
       on('creds.update',()=>{this.credentialWrites=this.credentialWrites.then(saveCreds);return this.credentialWrites;});
       on('connection.update',async ({connection,qr,lastDisconnect})=>{
         if(qr) { const image=await QRCode.toDataURL(qr);if(this.sock!==sock || this.stopped)return;this.state='pairing';this.qr=image;this.error=null;this.emit('status',this.status()); }
-        if(connection==='open') {this.state='connected';this.qr=null;this.error=null;this.attempt=0;this.emit('status',this.status());this.resolveLids().catch(()=>{});try{this.repairStored();}catch{}}
+        if(connection==='open') {this.state='connected';this.qr=null;this.error=null;this.attempt=0;this.emit('status',this.status());try{this.repairStored();}catch{}this.resolveLids().catch(()=>{}).then(()=>{try{this.repairMentions();}catch{}});}
         if(connection==='close') {
           await this.credentialWrites;
           if(this.sock!==sock || this.stopped)return;
@@ -150,6 +150,39 @@ export class WhatsApp extends EventEmitter {
   }
   raw(chat,id) { const m=this.store.getMessage(chat,id);return m?.raw?JSON.parse(m.raw,this.BufferJSON?.reviver):undefined; }
   // Contacts and message keys often carry both IDs for a person: remember the pair.
+  // @mentions arrive as "@<number>" in the text, with the person's ID (often a hidden "@lid" ID) alongside.
+  // Show the name instead: your saved contact name, their WhatsApp profile name, or at least +phone.
+  names() { if(!this._names)this._names=new Map(Object.entries(this.store.kv('names') || {}));return this._names; }
+  notePushName(jid,name) {
+    const id=this.canonical(jid);if(!id || !name || this.names().get(id)===name)return;
+    this.names().set(id,name);this.store.kv('names',Object.fromEntries(this.names()));
+  }
+  nameFor(jid) {
+    const bare=String(jid||'').replace(/:\d+@/,'@'),id=this.canonical(bare);
+    for(const key of new Set([id,bare])){const c=this.store.getRow?.('contacts',key);const n=c?.name || c?.notify || c?.verifiedName;if(n)return n;}
+    const pushed=this.names().get(id) || this.names().get(bare);if(pushed)return pushed;
+    return id.endsWith('@s.whatsapp.net')?'+'+id.split('@')[0]:null;
+  }
+  withNames(text,mentioned=[]) {
+    let out=String(text||'');
+    for(const j of mentioned){const digits=String(j).split('@')[0].split(':')[0],name=this.nameFor(j);if(digits&&name)out=out.split('@'+digits).join('@'+name);}
+    return out;
+  }
+  // Messages saved before a name was known: fill in names that are known now.
+  repairMentions() {
+    let fixed=0;
+    // First run: learn the profile names people use from the messages already saved.
+    if(!this.store.kv('names'))for(const m of this.store.messages({limit:1e9}))if(!m.fromMe&&m.pushName&&m.sender)this.notePushName(m.sender,m.pushName);
+    for(const m of this.store.messages({query:'@',limit:1e9})){
+      if(!/@\d{5,}/.test(m.text||''))continue;
+      let mentioned=m.mentions?.map(x=>x.id);
+      if(!mentioned&&m.raw){try{const raw=JSON.parse(m.raw);const body=this.lib?.normalizeMessageContent?.(raw.message) || raw.message || {};const k=Object.keys(body).find(x=>body[x]?.contextInfo);mentioned=body[k]?.contextInfo?.mentionedJid;}catch{}}
+      if(!mentioned?.length)continue;
+      const text=this.withNames(m.text,mentioned);
+      if(text!==m.text){this.store.message({...m,text,mentions:mentioned.map(j=>({id:this.canonical(j),name:this.nameFor(j)}))});fixed++;}
+    }
+    return fixed;
+  }
   noteContact(c) { if(c?.lid&&c.id?.endsWith('@s.whatsapp.net'))this.learnLid(c.lid,c.id);if(c?.id?.endsWith('@lid')&&c.phoneNumber)this.learnLid(c.id,c.phoneNumber); }
   noteKey(k) { if(!k)return;this.learnLid(k.remoteJid,k.remoteJidAlt);this.learnLid(k.participant,k.participantAlt); }
   ingest(m,live=true) {
@@ -182,10 +215,13 @@ export class WhatsApp extends EventEmitter {
     const kind=Object.keys(body).find(k=>!['messageContextInfo','senderKeyDistributionMessage'].includes(k));
     if(!kind)return;
     const content=body[kind];
-    const text=body.conversation || content?.text || content?.caption || content?.name || content?.displayName || '';
+    const sender=(m.key.participant&&this.canonical(m.key.participant)) || (m.key.fromMe?this.sock?.user?.id:chat);
+    if(!m.key.fromMe&&m.pushName)this.notePushName(sender,m.pushName);
+    const mentioned=(content?.contextInfo?.mentionedJid || []).filter(j=>typeof j==='string');
+    const text=this.withNames(body.conversation || content?.text || content?.caption || content?.name || content?.displayName || '',mentioned);
     const timestamp=Number(m.messageTimestamp || Math.floor(Date.now()/1000));
     const media=mediaInfo({message:body});
-    const value={chat,id,key:m.key,fromMe:!!m.key.fromMe,sender:(m.key.participant&&this.canonical(m.key.participant)) || (m.key.fromMe?this.sock?.user?.id:chat),pushName:m.pushName,text,kind,timestamp,status:m.status,hasMedia:!!media,media,raw:JSON.stringify(m,this.BufferJSON.replacer)};
+    const value={chat,id,key:m.key,fromMe:!!m.key.fromMe,sender,pushName:m.pushName,text,kind,timestamp,status:m.status,hasMedia:!!media,media,...(mentioned.length?{mentions:mentioned.map(j=>({id:this.canonical(j),name:this.nameFor(j)}))}:{}),raw:JSON.stringify(m,this.BufferJSON.replacer)};
     const fresh=this.store.message(value);
     const oldChat=this.store.getChat(chat);
     this.store.put('chats',{id:chat,...(!oldChat?.conversationTimestamp || timestamp>=Number(oldChat.conversationTimestamp)?{conversationTimestamp:timestamp,preview:text}:{}),...(!m.key.fromMe&&m.pushName&&!chat.endsWith('@g.us')&&!oldChat?.name?{name:m.pushName}:{})});

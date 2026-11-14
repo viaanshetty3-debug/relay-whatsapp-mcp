@@ -9,6 +9,9 @@
 - **Help page: your own model on Colab.** `colab/Relay_model_on_Colab.ipynb` runs a model (Qwen 3.8 27B by default) on a Colab GPU; while it runs, the help page answers with it first and falls back to Gemini/Cloudflare when the session ends.
 - **Relay starts itself.** When Claude Desktop or Claude Code needs Relay and it isn't running, the adapter starts it in the background (`RELAY_AUTOLAUNCH=off` to disable).
 
+### Fixed
+- @mentions in group chats show the person's name (saved contact name, else their WhatsApp profile name, else +phone) instead of WhatsApp's hidden ID number. Older messages are fixed on connect.
+
 ### Changed
 - The local adapter reports Relay's real version (it said 1.1.0).
 - "Transfer WhatsApp from Phone" carries an encrypted session's key and stores it in the Mac's Keychain.
