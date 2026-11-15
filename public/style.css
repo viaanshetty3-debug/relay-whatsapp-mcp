@@ -11,3 +11,7 @@
 
 .local-apps{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
 .local-apps[hidden]{display:none}
+
+.account-select{width:100%;margin:10px 0 2px;border:1px solid #2c4640;border-radius:10px;background:#172f2a;color:#dfe9e3;font:inherit;font-size:12px;padding:8px 10px;cursor:pointer}.account-select:focus-visible{outline:2px solid var(--mint)}
+.setup-banner{margin:14px 36px 0;padding:14px 18px;border-radius:14px;background:#eef4e2;border:1px solid #dbe6c8;font-size:13px;line-height:1.9}.setup-banner[hidden]{display:none}.setup-banner button{margin:0 4px}
+#sync-card form{margin:12px 0}

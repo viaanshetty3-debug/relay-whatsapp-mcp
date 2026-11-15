@@ -73,8 +73,9 @@ test('sign up with an emailed 6-digit code, then sign in, reset the password and
   assert.equal((await call('/api/state')).status, 200, 'the session cookie opens the workspace');
   assert.equal((await call('/auth/status')).json.email, 'ada@example.com');
 
-  r = await call('/auth/signup', { body: { ...PROFILE, email: 'eve@example.com' } });
-  assert.equal(r.status, 403, 'sign-up closes once the bridge has an owner');
+  r = await call('/auth/signup', { body: { ...PROFILE } });
+  assert.equal(r.status, 409, 'one account per email on this computer');
+  assert.match(r.json.error, /Sign in instead/);
 
   await call('/auth/logout', { body: {} });
   assert.equal((await call('/api/state')).status, 401);
@@ -133,7 +134,7 @@ test('a hosted bridge needs the owner token to create the first account', async 
   assert.equal((await call('/auth/signup', { body: { ...PROFILE, setupToken: 'test'.repeat(16) } })).status, 200);
 });
 
-test('sign in with GitHub: first time finishes sign-up, later it signs straight in, other accounts are refused', async t => {
+test('sign in with GitHub: first time finishes sign-up, later it signs straight in, other GitHub accounts never open it', async t => {
   let user = { id: 42, login: 'ada', name: 'Ada Lovelace' }, emails = [{ email: 'ada@example.com', primary: true, verified: true }];
   const seen = [];
   const fakeFetch = async (url, init = {}) => {
@@ -176,8 +177,10 @@ test('sign in with GitHub: first time finishes sign-up, later it signs straight 
   user = { id: 99, login: 'eve' }; emails = [{ email: 'eve@example.com', primary: true, verified: true }];
   await call('/auth/logout', { host: 'localhost', body: {} });
   r = await signInWithGitHub();
-  assert.match(decodeURIComponent(r.location), /isn't the one that owns this bridge/);
+  // Someone else's GitHub never opens Ada's account: it can only start an account of its own.
+  assert.match(r.location, /^\/\?signup=/);
   assert.equal(r.setCookie, null);
+  assert.equal((await call('/api/state', { host: 'localhost' })).status, 401);
 
   r = await call('/auth/callback/github?code=abc&state=forged', { host: 'localhost' });
   assert.match(decodeURIComponent(r.location), /expired/);

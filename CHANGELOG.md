@@ -1,8 +1,11 @@
 # Changelog
 
-## Unreleased
+## 1.2.0 — 2026-11-15
 
 ### Added
+- **Several accounts on one computer.** Up to five Relay accounts (for example Business and Private), each with its own WhatsApp profiles, messages, encryption key, owner token and AI-app approvals. Switch from the account menu without signing out. "Add to Claude Desktop" gives each account its own entry (`whatsapp`, `whatsapp-<email>`). Existing installs keep working: your account becomes the first one.
+- **Use an account on another computer (optional, off by default).** Turn it on under Connections, then sign in on another computer with the same email and password. Your profile names and settings arrive, encrypted with a key made from your password that the Relay Accounts service never sees. WhatsApp itself is linked again on each computer with a QR code, and messages never leave your computers. See README and SECURITY.md.
+- `RELAY_ACCOUNT` (set for you by "Add to Claude Desktop") tells the local adapter which account to use.
 - **Encryption at rest.** Messages, chats, contacts, drafts, scheduled messages, your dashboard account and the WhatsApp session files are encrypted with AES-256-GCM, using a per-device key kept in the macOS Keychain or a private key file in your user profile (Windows, Linux, Termux). Phone numbers and group IDs are stored as keyed hashes. Existing data is converted automatically on first start. See SECURITY.md for exactly what this does and doesn't protect.
 - `RELAY_ENCRYPTION=off` and `RELAY_DATA_KEY` settings.
 - **One-click Claude setup.** "Add to Claude Desktop" and "Add to Claude Code" buttons in the dashboard, and `npx relay-whatsapp-mcp connect` in a terminal. No JSON editing; existing Claude settings are kept and backed up.
@@ -13,6 +16,11 @@
 - @mentions in group chats show the person's name (saved contact name, else their WhatsApp profile name, else +phone) instead of WhatsApp's hidden ID number. Older messages are fixed on connect.
 
 ### Changed
+- Sign-up no longer closes after the first account: on a local bridge, anyone using the computer can add an account of their own (it starts empty and can't see the others). Hosted bridges still require the owner token to create any account.
+- A Google/GitHub sign-in that doesn't match an existing account is offered a new account instead of an error (hosted bridges still refuse it).
+- Signing out signs out of the account in front; other accounts in the same browser stay signed in.
+- "Registered AI clients" lists the clients the account in front approved. Revoking removes that account's access.
+- **Practice mode starts unlinked.** `npx relay-whatsapp-mcp demo` now begins like a first run: create an account, click Connect WhatsApp, see a clearly labelled pretend QR code (nothing to scan), and the sample chats appear after a few seconds. `RELAY_DEMO_LINKED=1` restores the old always-connected demo.
 - The local adapter reports Relay's real version (it said 1.1.0).
 - "Transfer WhatsApp from Phone" carries an encrypted session's key and stores it in the Mac's Keychain.
 

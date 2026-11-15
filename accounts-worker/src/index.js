@@ -7,8 +7,13 @@
 //  • GET  /callback/:p      finishes the provider sign-in and sends the bridge a short-lived,
 //                            Ed25519-signed assertion (the bridge checks it with a built-in public key).
 //  • GET  /admin/gmail/start  the owner connects the Gmail account that sends the codes (once).
+//  • POST /account/*        optional account sync: keeps one encrypted blob per account so its owner
+//                            can sign in on another computer. The blob is encrypted on the owner's
+//                            computer with a key made from their password; this service can't read it.
 //
-// It stores no accounts: only rate-limit counters (deleted daily) and the Gmail refresh token.
+// It stores: rate-limit counters (deleted daily), the Gmail refresh token, and, only for people who
+// turn account sync on, a hash of their email, a hash of a sign-in key, and their encrypted blob.
+// It never receives a password, a WhatsApp session, a message or a contact.
 import { PROVIDERS } from '../../src/providers.js';
 
 const HOUR = 3600000, DAY = 24 * HOUR;
@@ -78,8 +83,15 @@ export class AccountsStore {
       if (request.method === 'PUT') { await this.storage.put('gmail', await request.json()); return json({ ok: true }); }
       return json((await this.storage.get('gmail')) || null);
     }
-    // POST /limit {limits:[{name,max,ms}]}: fixed windows, all-or-nothing.
-    const { limits, now = Date.now() } = await request.json();
+    // One synced account, or the emailed code that lets its owner create it.
+    if (url.pathname === '/account' || url.pathname === '/pending') {
+      const key = url.pathname.slice(1);
+      if (request.method === 'PUT') { await this.storage.put(key, await request.json()); return json({ ok: true }); }
+      if (request.method === 'DELETE') { await this.storage.delete(key); return json({ ok: true }); }
+      return json((await this.storage.get(key)) || null);
+    }
+    // POST /limit {limits:[{name,max,ms}], peek}: fixed windows, all-or-nothing. peek only looks.
+    const { limits, now = Date.now(), peek = false } = await request.json();
     const saved = (await this.storage.get('windows')) || {}, windows = {};
     for (const { name, ms } of limits) {
       const bucket = Math.floor(now / ms);
@@ -87,6 +99,7 @@ export class AccountsStore {
     }
     const blocked = limits.find(({ name, max }) => windows[name].count >= max);
     if (blocked) return json({ ok: false, retryAfter: Math.ceil(((windows[blocked.name].bucket + 1) * blocked.ms - now) / 1000) });
+    if (peek) return json({ ok: true });
     for (const { name } of limits) windows[name].count++;
     await this.storage.put('windows', { ...saved, ...windows });
     await this.storage.setAlarm((Math.floor(now / DAY) + 1) * DAY);
@@ -97,8 +110,8 @@ export class AccountsStore {
 
 const store = (env, name) => env.STORE.get(env.STORE.idFromName(name));
 async function hash(s) { return b64u(await crypto.subtle.digest('SHA-256', enc.encode(String(s).toLowerCase()))); }
-async function limit(env, name, limits) {
-  const res = await store(env, name).fetch('https://store/limit', { method: 'POST', body: JSON.stringify({ limits }) });
+async function limit(env, name, limits, peek = false) {
+  const res = await store(env, name).fetch('https://store/limit', { method: 'POST', body: JSON.stringify({ limits, peek }) });
   return res.json();
 }
 
@@ -115,7 +128,7 @@ async function gmailAccessToken(env, fetchImpl) {
 }
 
 export function codeEmail({ from, to, code, purpose }) {
-  const action = purpose === 'reset' ? 'reset your Relay password' : 'confirm your email for Relay';
+  const action = purpose === 'reset' ? 'reset your Relay password' : purpose === 'sync' ? 'let your Relay account follow you to your other computers' : 'confirm your email for Relay';
   const text = `Your Relay code is ${code}\r\n\r\nUse it to ${action}. It expires in 10 minutes.\r\n\r\nIf you didn't ask for this code, you can ignore this email. Relay is an open-source WhatsApp bridge: https://github.com/viaanshetty3-debug/relay-whatsapp-mcp\r\n`;
   const mime = [`From: Relay <${from}>`, `To: ${to}`, `Subject: Your Relay code: ${code}`, 'MIME-Version: 1.0', 'Content-Type: text/plain; charset=UTF-8', 'Content-Transfer-Encoding: 8bit', '', text].join('\r\n');
   return b64u(enc.encode(mime));
@@ -127,14 +140,18 @@ async function sendCode(request, env, fetchImpl) {
   if (to.length > 254 || !/^[^\s@<>,;"]+@[^\s@<>,;"]+\.[^\s@<>,;"]{2,}$/.test(to)) return json({ error: 'Invalid email address.' }, 400);
   if (!/^\d{6}$/.test(code)) return json({ error: 'Invalid code.' }, 400);
   const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
-  for (const [name, limits] of [
-    ['to:' + await hash(to), [{ name: 'hour', max: 5, ms: HOUR }, { name: 'day', max: 15, ms: DAY }]],
-    ['ip:' + await hash(ip), [{ name: 'hour', max: 20, ms: HOUR }]],
-    ['global', [{ name: 'day', max: Number(env.DAILY_EMAIL_LIMIT || 450), ms: DAY }]],
-  ]) {
+  for (const [name, limits] of await EMAIL_LIMITS(to, ip, env)) {
     const r = await limit(env, name, limits);
     if (!r.ok) return json({ error: 'Too many codes were sent. Try again later.', retryAfter: r.retryAfter }, 429);
   }
+  return deliver(env, fetchImpl, { to, code, purpose });
+}
+const EMAIL_LIMITS = async (to, ip, env) => [
+  ['to:' + await hash(to), [{ name: 'hour', max: 5, ms: HOUR }, { name: 'day', max: 15, ms: DAY }]],
+  ['ip:' + await hash(ip), [{ name: 'hour', max: 20, ms: HOUR }]],
+  ['global', [{ name: 'day', max: Number(env.DAILY_EMAIL_LIMIT || 450), ms: DAY }]],
+];
+async function deliver(env, fetchImpl, { to, code, purpose }) {
   try {
     const token = await gmailAccessToken(env, fetchImpl);
     const res = await fetchImpl('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
@@ -147,6 +164,79 @@ async function sendCode(request, env, fetchImpl) {
     console.error('Email error:', String(error?.message || error).slice(0, 200)); // never logs the address or code
     return json({ error: 'The code could not be sent. Try again in a minute.' }, 502);
   }
+}
+
+// ---------- account sync ----------
+// The bridge derives two keys from the password. `auth` proves the owner to this service (only its
+// hash is kept); the other key encrypts the blob and never leaves the bridge.
+const CODE_TTL = 10 * 60000, CODE_TRIES = 5, MAX_BLOB = 64 * 1024;
+const VALID = { email: /^[^\s@<>,;"]+@[^\s@<>,;"]+\.[^\s@<>,;"]{2,}$/, key: /^[\w-]{43}$/, salt: /^[\w-]{16,64}$/, blob: /^v1\.[\w-]{16}\.[\w-]+$/, code: /^\d{6}$/ };
+const sha = async s => b64u(await crypto.subtle.digest('SHA-256', enc.encode(String(s))));
+const same = (a, b) => { a = String(a); b = String(b); let d = a.length ^ b.length; for (let i = 0; i < a.length && i < b.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i); return d === 0; };
+const goodBlob = b => typeof b === 'string' && b.length <= MAX_BLOB && VALID.blob.test(b);
+const FAILS = [{ name: 'hour', max: 10, ms: HOUR }];
+
+async function account(request, env, path, fetchImpl) {
+  let body; try { body = await request.json(); } catch { return json({ error: 'Send JSON.' }, 400); }
+  const email = String(body?.email || '').trim().toLowerCase();
+  if (email.length > 254 || !VALID.email.test(email)) return json({ error: 'Invalid email address.' }, 400);
+  const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+  const id = await hash(email), box = store(env, 'acct:' + id);
+  const read = async key => (await box.fetch('https://store/' + key)).json();
+  const write = (key, value) => box.fetch('https://store/' + key, { method: 'PUT', body: JSON.stringify(value) });
+  const general = await limit(env, 'acct-ip:' + await hash(ip), [{ name: 'hour', max: 300, ms: HOUR }]);
+  if (!general.ok) return json({ error: 'Too many requests. Try again later.', retryAfter: general.retryAfter }, 429);
+
+  if (path === 'start') { // email a code that proves the address belongs to whoever is turning sync on
+    for (const [name, limits] of await EMAIL_LIMITS(email, ip, env)) {
+      const r = await limit(env, name, limits);
+      if (!r.ok) return json({ error: 'Too many codes were sent. Try again later.', retryAfter: r.retryAfter }, 429);
+    }
+    const code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 1000000).padStart(6, '0');
+    await write('pending', { codeHash: await sha(id + ':' + code), expires: Date.now() + CODE_TTL, tries: 0 });
+    return deliver(env, fetchImpl, { to: email, code, purpose: 'sync' });
+  }
+  if (path === 'salt') { // an unknown email gets a stable made-up salt, so this can't be used to look people up
+    const saved = await read('account');
+    if (saved) return json({ salt: saved.salt });
+    const key = await crypto.subtle.importKey('raw', unb64u(env.STATE_KEY), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    return json({ salt: b64u(await crypto.subtle.sign('HMAC', key, enc.encode('salt:' + email))).slice(0, 22) });
+  }
+  if (path === 'register') {
+    if (!VALID.code.test(String(body.code || '')) || !VALID.salt.test(body.salt || '') || !VALID.key.test(body.auth || '') || !goodBlob(body.blob)) return json({ error: 'Invalid request.' }, 400);
+    const pending = await read('pending');
+    if (!pending || pending.expires < Date.now()) return json({ error: 'That code has expired. Ask for a new one.' }, 400);
+    if (pending.tries >= CODE_TRIES) return json({ error: 'Too many wrong codes. Ask for a new one.' }, 400);
+    if (!same(await sha(id + ':' + body.code), pending.codeHash)) { await write('pending', { ...pending, tries: pending.tries + 1 }); return json({ error: 'That code is not right.' }, 400); }
+    const saved = await read('account');
+    // The code proves the email; replacing an existing copy also needs the owner to say so.
+    if (saved && body.replace !== true) return json({ error: 'This email already has a synced account.', exists: true }, 409);
+    await write('account', { salt: body.salt, authHash: await sha(body.auth), blob: body.blob, rev: (saved?.rev || 0) + 1, createdAt: saved?.createdAt || Date.now(), updatedAt: Date.now() });
+    await box.fetch('https://store/pending', { method: 'DELETE' });
+    return json({ ok: true, rev: (saved?.rev || 0) + 1 });
+  }
+  // Everything else needs the sign-in key. Wrong keys are counted per account and per network.
+  if (!['login', 'save', 'rekey', 'delete'].includes(path)) return json({ error: 'Not found' }, 404);
+  const counters = [['acct-fail:' + id, FAILS], ['acct-fail-ip:' + await hash(ip), [{ name: 'hour', max: 30, ms: HOUR }]]];
+  for (const [name, limits] of counters) { const r = await limit(env, name, limits, true); if (!r.ok) return json({ error: 'Too many attempts. Try again later.', retryAfter: r.retryAfter }, 429); }
+  const saved = await read('account');
+  if (!saved || !VALID.key.test(body.auth || '') || !same(await sha(body.auth), saved.authHash)) {
+    for (const [name, limits] of counters) await limit(env, name, limits);
+    return json({ error: 'Wrong email or password.' }, 401);
+  }
+  if (path === 'login') return json({ ok: true, salt: saved.salt, blob: saved.blob, rev: saved.rev });
+  if (path === 'delete') { await box.fetch('https://store/account', { method: 'DELETE' }); await box.fetch('https://store/pending', { method: 'DELETE' }); return json({ ok: true }); }
+  if (!goodBlob(body.blob)) return json({ error: 'Invalid request.' }, 400);
+  if (path === 'save') {
+    // Another computer saved first: hand back its copy so the bridge can merge and try again.
+    if (body.rev !== saved.rev) return json({ error: 'Out of date.', blob: saved.blob, rev: saved.rev }, 409);
+    await write('account', { ...saved, blob: body.blob, rev: saved.rev + 1, updatedAt: Date.now() });
+    return json({ ok: true, rev: saved.rev + 1 });
+  }
+  // rekey: the password changed, so the keys and the blob are replaced together.
+  if (!VALID.salt.test(body.salt || '') || !VALID.key.test(body.newAuth || '')) return json({ error: 'Invalid request.' }, 400);
+  await write('account', { ...saved, salt: body.salt, authHash: await sha(body.newAuth), blob: body.blob, rev: saved.rev + 1, updatedAt: Date.now() });
+  return json({ ok: true, rev: saved.rev + 1 });
 }
 
 // ---------- sign-in providers ----------
@@ -224,7 +314,8 @@ async function gmailCallback(url, env, fetchImpl) {
 const REPO = '<a href="https://github.com/viaanshetty3-debug/relay-whatsapp-mcp">Relay</a>';
 const PRIVACY = `Relay Accounts helps people sign in to their own ${REPO} bridge, an open-source WhatsApp bridge that runs on their own computer.<br><br>
 <b>What it handles.</b> When you sign in with Google, Microsoft, GitHub or Facebook, it receives your account ID, name, email address and whether that email is verified, and passes them, signed, straight back to your own Relay bridge. When Relay emails you a code, it receives the email address and the 6-digit code and sends that one email through Gmail.<br><br>
-<b>What it keeps.</b> No accounts, names, emails or codes are stored. It keeps only rate-limit counters (keyed by a one-way hash of the email address and of the network address), which are deleted daily, and the token for the Gmail account that sends the codes. Your account and password live only on your own bridge; the service never sees your password.<br><br>
+<b>What it keeps.</b> By default no accounts, names, emails or codes are stored: only rate-limit counters (keyed by a one-way hash of the email address and of the network address), which are deleted daily, and the token for the Gmail account that sends the codes. Your account and password live on your own bridge; the service never sees your password.<br><br>
+<b>Account sync (optional, off unless you turn it on).</b> If you turn on "use this account on other computers" in your Relay dashboard, the service also keeps, under a one-way hash of your email address: a hash of a sign-in key made from your password, and one encrypted blob holding your name, country, phone number, the names of your WhatsApp profiles and which AI apps you set up. The blob is encrypted on your own computer with a key made from your password, so the service cannot read it. It never holds your password, WhatsApp session, messages, contacts or media. Turning sync off in the dashboard deletes this copy.<br><br>
 <b>What it never does.</b> It doesn't sell or share data, show ads, track you, or use data from Google or other providers for anything except signing you in. Use of information received from Google APIs adheres to the Google API Services User Data Policy, including the Limited Use requirements.<br><br>
 <b>Questions or removal.</b> Open an issue on the Relay GitHub repository. The source code of this service is public in the repository's accounts-worker folder.`;
 const TERMS = `Relay Accounts is a free service for signing in to ${REPO} bridges, provided as is, without warranty. Use it only to sign in to a Relay bridge you own or are allowed to use. Don't use it to send unwanted email; codes are rate-limited. The service may change or stop; Relay can always run without it (set RELAY_ACCOUNTS_URL=off and use your own email server or sign-in apps). See also the <a href="/privacy">privacy policy</a>.`;
@@ -235,6 +326,7 @@ export default {
     try {
       if (request.method === 'OPTIONS') return new Response(null, { headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST', 'Access-Control-Allow-Headers': 'Content-Type' } });
       if (request.method === 'POST' && url.pathname === '/email/code') return await sendCode(request, env, fetchImpl);
+      if (request.method === 'POST' && url.pathname.startsWith('/account/')) return await account(request, env, url.pathname.slice(9), fetchImpl);
       if (request.method !== 'GET') return json({ error: 'Not found' }, 404);
       if (url.pathname === '/providers') return json(enabled(env).map(id => ({ id, name: PROVIDERS[id].name })));
       if (url.pathname === '/health') {

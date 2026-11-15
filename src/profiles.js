@@ -101,11 +101,14 @@ export class Profiles extends EventEmitter {
     if (this.all().some(p => p !== self && p.name.toLowerCase() === key)) throw new Error('A profile with that name already exists.');
     return clean;
   }
-  create(name) {
+  // `id`: reuse the id this profile has on the owner's other computers (account sync), so a
+  // rename there is recognised here. The profile still links its own WhatsApp device.
+  create(name, { id: wanted } = {}) {
     if (!this.config.dir) throw new Error('Profiles need a data folder.');
     if (this.entries.size + this.unloaded.length >= MAX_PROFILES) throw new Error(`You can link up to ${MAX_PROFILES} WhatsApp profiles.`);
-    const clean = this.checkName(name);
-    let id; do id = randomBytes(4).toString('hex'); while (this.entries.has(id));
+    if (wanted !== undefined && (!ID.test(wanted) || this.entries.has(wanted) || this.unloaded.some(p => p.id === wanted))) throw new Error('That profile id can’t be used.');
+    let clean; try { clean = this.checkName(name); } catch (e) { if (!wanted) throw e; clean = this.checkName(`${cleanName(name).slice(0, 36)} (2)`); }
+    let id = wanted; if (!id) do id = randomBytes(4).toString('hex'); while (this.entries.has(id));
     const entry = this.load(id, clean);
     this.entries.set(id, entry); this.save(); this.emit('change');
     return this.describe(entry);

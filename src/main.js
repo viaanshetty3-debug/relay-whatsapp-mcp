@@ -7,6 +7,7 @@ import { DemoWhatsApp } from './demo.js';
 import { Bridge } from './tools.js';
 import { createApp } from './server.js';
 import { Profiles } from './profiles.js';
+import { Spaces } from './spaces.js';
 import { openBrowser, shouldOpenBrowser } from './open-browser.js';
 const cfg=config();
 let store;
@@ -14,7 +15,7 @@ try{store=new Store(resolve(cfg.dir,'bridge.sqlite'),{vault:cfg.demo?null:openVa
 catch(e){console.error(`Relay can't open its data: ${e.message}`);process.exit(1);}
 const wa=cfg.demo?new DemoWhatsApp(store,cfg):new WhatsApp(store,cfg);
 const bridge=new Bridge(store,wa,cfg);
-const profiles=new Profiles(cfg,bridge);
+const profiles=new Spaces(cfg,new Profiles(cfg,bridge)); // every account on this computer
 const app=createApp(profiles,cfg);
 const server=app.listen(cfg.port,cfg.host,()=>{
   console.log(`WhatsApp AI Bridge${cfg.demo?' — DEMO':''}\nDashboard: ${cfg.base}\nMCP: ${cfg.base}/mcp`);

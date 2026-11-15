@@ -1,7 +1,8 @@
-// Owner account for the dashboard: sign up with full name, country, phone, email (verified with a
-// 6-digit emailed code) and a strong password, or sign in with Google, Microsoft, GitHub or Facebook.
-// One bridge serves one WhatsApp account, so it has exactly one owner: sign-up closes once the
-// account exists. The owner token still works for local MCP clients and as a recovery option.
+// Dashboard accounts: sign up with full name, country, phone, email (verified with a 6-digit
+// emailed code) and a strong password, or sign in with Google, Microsoft, GitHub or Facebook.
+// One computer can hold several accounts (spaces.js): each has its own WhatsApp profiles, data
+// and AI-app approvals, and a browser can be signed in to more than one and switch between them.
+// Each account's owner token still works for local MCP clients and as a recovery option.
 import { randomBytes, randomInt, scrypt as scryptCb, createHash, createPublicKey, verify as verifySig } from 'node:crypto';
 import { promisify } from 'node:util';
 import express from 'express';
@@ -12,7 +13,7 @@ export { PROVIDERS };
 const scrypt = promisify(scryptCb);
 const SCRYPT = { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
 const DAY = 86400000, CODE_TTL = 10 * 60000, CODE_TRIES = 5, SESSION_TTL = 30 * DAY;
-export const COOKIE = 'relay_session';
+export const COOKIE = 'relay_session', ACTIVE_COOKIE = 'relay_account';
 // Relay Accounts (accounts-worker/) signs sign-in results with this Ed25519 key.
 export const ACCOUNTS_PUBLIC_KEY = 'MCowBQYDK2VwAyEAs94Kep38ad-15GUWSB1tXdRxMJuLGvRnDMpuANpdwt8';
 const digest = s => createHash('sha256').update(String(s)).digest('base64url');
@@ -34,7 +35,7 @@ export function passwordProblems(password, { email = '', name = '' } = {}) {
   return problems;
 }
 
-async function hashPassword(password) {
+export async function hashPassword(password) {
   const salt = randomBytes(16).toString('base64url');
   const key = await scrypt(String(password), salt, 64, SCRYPT);
   return `scrypt$${salt}$${key.toString('base64url')}`;
@@ -58,14 +59,16 @@ export function validateProfile(input) {
   return { profile: { fullName, country, phone, email } };
 }
 
-function cookieValue(req) {
-  const raw = req.headers.cookie || '';
-  for (const part of raw.split(';')) {
+function cookies(req) {
+  const out = {};
+  for (const part of (req.headers.cookie || '').split(';')) {
     const [k, ...v] = part.trim().split('=');
-    if (k === COOKIE) return v.join('=');
+    if (k) out[k] = v.join('=');
   }
-  return null;
+  return out;
 }
+const cookieName = space => (space.id === 'default' ? COOKIE : `${COOKIE}_${space.id}`);
+const LOOPBACK = ['127.0.0.1', '::1', '::ffff:127.0.0.1'];
 
 // Checks a Relay Accounts assertion: "payload.signature", both base64url, Ed25519 over the payload text.
 export function verifyAssertion(assertion, publicKey = ACCOUNTS_PUBLIC_KEY) {
@@ -100,7 +103,7 @@ export function createMailer(config, fetchImpl = fetch) {
   };
 }
 
-export function mountAccounts(app, config, store) {
+export function mountAccounts(app, config, spaces, { cloud } = {}) {
   const fetchImpl = config.fetch || fetch;
   const mailer = createMailer(config, fetchImpl);
   const accountsKey = config.accountsPublicKey || process.env.RELAY_ACCOUNTS_PUBLIC_KEY || ACCOUNTS_PUBLIC_KEY;
@@ -134,7 +137,10 @@ export function mountAccounts(app, config, store) {
   const enabledProviders = async () => (directProviders().length ? directProviders() : brokerProviders());
   const getProvider = id => (config.providers ? (config.providers[id] && { ...PROVIDERS[id], ...config.providers[id] }) : providerConfig(id));
 
-  const owner = () => store.kv('account:owner');
+  const ownerOf = space => space.store.kv('account:owner');
+  const anyOwner = () => spaces.all().some(s => ownerOf(s));
+  const findByEmail = email => spaces.all().find(s => ownerOf(s)?.email === email) || null;
+  const shared = spaces.default.store; // sign-ups in progress, before the account has a space of its own
   const failures = new Map(); // ip → { count, reset }
   const pendingSocial = new Map(); // state → { provider, verifier, mode, expires }, and ticket → profile
   const sweep = setInterval(() => {
@@ -154,36 +160,46 @@ export function mountAccounts(app, config, store) {
     f.count++;
   }
 
-  function startSession(res) {
-    const token = secret(), sessions = store.kv('account:sessions') || {};
+  // ----- sessions: one cookie per account, plus one that remembers which account is in front -----
+  const cookieAttrs = `Path=/; HttpOnly; SameSite=Lax${secureCookie ? '; Secure' : ''}`;
+  function startSession(res, space) {
+    const token = secret(), sessions = space.store.kv('account:sessions') || {};
     for (const [k, v] of Object.entries(sessions)) if (v.expires < Date.now()) delete sessions[k];
     sessions[digest(token)] = { expires: Date.now() + SESSION_TTL };
-    store.kv('account:sessions', sessions);
-    res.append('Set-Cookie', `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_TTL / 1000}${secureCookie ? '; Secure' : ''}`);
+    space.store.kv('account:sessions', sessions);
+    res.append('Set-Cookie', `${cookieName(space)}=${token}; ${cookieAttrs}; Max-Age=${SESSION_TTL / 1000}`);
+    res.append('Set-Cookie', `${ACTIVE_COOKIE}=${space.id}; ${cookieAttrs}; Max-Age=${SESSION_TTL / 1000}`);
   }
-  function sessionValid(req) {
-    const token = cookieValue(req);
-    if (!token || !owner()) return false;
-    const s = (store.kv('account:sessions') || {})[digest(token)];
+  function signedInTo(req, space, jar = cookies(req)) {
+    const token = jar[cookieName(space)];
+    if (!token || !ownerOf(space)) return false;
+    const s = (space.store.kv('account:sessions') || {})[digest(token)];
     return Boolean(s && s.expires > Date.now());
   }
-  function endSession(req, res) {
-    const token = cookieValue(req);
-    if (token) { const sessions = store.kv('account:sessions') || {}; delete sessions[digest(token)]; store.kv('account:sessions', sessions); }
-    res.append('Set-Cookie', `${COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureCookie ? '; Secure' : ''}`);
+  const signedSpaces = req => { const jar = cookies(req); return spaces.all().filter(s => signedInTo(req, s, jar)); };
+  // The account this browser is working in: the one it last chose, else any it is signed in to.
+  function spaceFor(req) {
+    const list = signedSpaces(req), want = cookies(req)[ACTIVE_COOKIE];
+    return list.find(s => s.id === want) || list[0] || null;
+  }
+  function endSession(req, res, space) {
+    const token = cookies(req)[cookieName(space)];
+    if (token) { const sessions = space.store.kv('account:sessions') || {}; delete sessions[digest(token)]; space.store.kv('account:sessions', sessions); }
+    res.append('Set-Cookie', `${cookieName(space)}=; ${cookieAttrs}; Max-Age=0`);
   }
 
-  // Who may create the one owner account: anyone on this computer for a local bridge; on a public
+  // Who may add an account to this computer: anyone using it for a local bridge; on a public
   // deployment, only someone who also has the owner token from the server's settings.
   function maySignUp(req, body) {
-    if (owner()) return 'An account already exists for this bridge. Sign in instead.';
+    if (anyOwner() && ownerOf(spaces.default) && spaces.full()) return 'This computer already holds the most accounts Relay allows. Remove one first.';
     if (localBase) {
-      const ip = req.socket.remoteAddress || '';
-      if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(ip)) return 'Create the account on the computer running Relay.';
+      if (!LOOPBACK.includes(req.socket.remoteAddress || '')) return 'Create the account on the computer running Relay.';
       return null;
     }
-    return equal(body?.setupToken, config.token) ? null : 'On a hosted bridge, enter the owner token from your hosting settings to create the first account.';
+    return equal(body?.setupToken, config.token) ? null : 'On a hosted bridge, enter the owner token from your hosting settings to create an account.';
   }
+  // The first account uses the original data folder; each later one gets a folder of its own.
+  const newSpace = () => (ownerOf(spaces.default) ? spaces.create() : spaces.default);
 
   async function sendCode(email, purpose) {
     const code = String(randomInt(0, 1000000)).padStart(6, '0');
@@ -210,16 +226,19 @@ export function mountAccounts(app, config, store) {
     if (!/^\d{6}$/.test(String(code || '')) || !equal(digest(code), record.codeHash)) { record.tries++; return 'That code is not right.'; }
     return null;
   }
+  const describe = (space, active) => { const o = ownerOf(space); return { id: space.id, email: o.email, name: o.fullName, active: space === active }; };
 
   const router = express.Router();
   router.use(express.json({ limit: '16kb' }));
 
   router.get('/status', async (req, res) => {
-    const o = owner(), providers = await enabledProviders();
+    const active = spaceFor(req), o = active && ownerOf(active), providers = await enabledProviders();
     res.json({
-      hasAccount: Boolean(o), signedIn: sessionValid(req), email: sessionValid(req) ? o.email : undefined,
-      name: sessionValid(req) ? o.fullName : undefined, providers: providers.map(id => ({ id, name: PROVIDERS[id].name })),
-      emailReady: await emailReady(), hostedSetup: !localBase && !o,
+      hasAccount: anyOwner(), signedIn: Boolean(active), email: o?.email, name: o?.fullName,
+      account: active?.id, accounts: signedSpaces(req).map(s => describe(s, active)),
+      canAdd: !spaces.full() || !ownerOf(spaces.default), cloud: Boolean(cloud?.available()),
+      providers: providers.map(id => ({ id, name: PROVIDERS[id].name })),
+      emailReady: await emailReady(), hostedSetup: !localBase,
     });
   });
 
@@ -229,40 +248,45 @@ export function mountAccounts(app, config, store) {
     if (req.body.ticket && (!social || social.expires < Date.now())) return res.status(400).json({ error: 'Your sign-in expired. Start again.' });
     const { profile, error } = validateProfile({ ...req.body, email: social ? social.email : req.body.email });
     if (error) return res.status(400).json({ error });
+    if (findByEmail(profile.email)) return res.status(409).json({ error: 'An account with that email is already on this computer. Sign in instead.' });
     const problems = passwordProblems(req.body.password, { email: profile.email, name: profile.fullName });
     if (problems.length) return res.status(400).json({ error: `Your password needs ${problems.join(', ')}.` });
     const passwordHash = await hashPassword(req.body.password);
     if (social) { // the provider already verified this email
       pendingSocial.delete(`ticket:${req.body.ticket}`);
-      store.kv('account:owner', { ...profile, passwordHash, providers: { [social.provider]: social.id }, createdAt: Date.now() });
-      startSession(res); return res.json({ ok: true, signedIn: true });
+      const space = newSpace();
+      space.store.kv('account:owner', { ...profile, passwordHash, providers: { [social.provider]: social.id }, createdAt: Date.now() });
+      startSession(res, space); return res.json({ ok: true, signedIn: true });
     }
     if (!mailer && !config.demo) return noMail(res);
-    const prev = store.kv('account:pending'), limit = codeLimit(prev);
+    const prev = shared.kv('account:pending'), limit = codeLimit(prev);
     if (limit) return res.status(429).json({ error: limit });
     try {
       const code = await sendCode(profile.email, 'verify');
-      store.kv('account:pending', codeRecord(code, { profile, passwordHash, sentAt: Date.now(), history: codeHistory(prev) }));
+      shared.kv('account:pending', codeRecord(code, { profile, passwordHash, sentAt: Date.now(), history: codeHistory(prev) }));
       res.json({ ok: true, verify: true, email: profile.email, ...demoCode(code) });
     } catch (e) { mailError(res, e); }
   });
 
   router.post('/verify', (req, res) => {
     const denied = maySignUp(req, req.body); if (denied) return res.status(403).json({ error: denied });
-    const pending = store.kv('account:pending');
+    const pending = shared.kv('account:pending');
     if (!pending || pending.profile.email !== lower(req.body.email)) return res.status(400).json({ error: 'Start creating your account again.' });
     const problem = checkCode(pending, req.body.code);
-    if (problem) { store.kv('account:pending', pending); return res.status(400).json({ error: problem }); }
-    store.kv('account:owner', { ...pending.profile, passwordHash: pending.passwordHash, providers: {}, createdAt: Date.now() });
-    store.kv('account:pending', null);
-    startSession(res); res.json({ ok: true, signedIn: true });
+    if (problem) { shared.kv('account:pending', pending); return res.status(400).json({ error: problem }); }
+    if (findByEmail(pending.profile.email)) { shared.kv('account:pending', null); return res.status(409).json({ error: 'An account with that email is already on this computer. Sign in instead.' }); }
+    const space = newSpace();
+    space.store.kv('account:owner', { ...pending.profile, passwordHash: pending.passwordHash, providers: {}, createdAt: Date.now() });
+    shared.kv('account:pending', null);
+    startSession(res, space); res.json({ ok: true, signedIn: true });
   });
 
   router.post('/resend', async (req, res) => {
-    const kind = req.body.purpose === 'reset' ? 'account:reset' : 'account:pending';
-    const record = store.kv(kind);
-    const email = kind === 'account:reset' ? record?.email : record?.profile?.email;
-    if (!record || email !== lower(req.body.email)) return res.json({ ok: true }); // don't reveal anything
+    const reset = req.body.purpose === 'reset', email = lower(req.body.email);
+    const store = reset ? findByEmail(email)?.store : shared, kind = reset ? 'account:reset' : 'account:pending';
+    const record = store?.kv(kind);
+    const sentTo = reset ? record?.email : record?.profile?.email;
+    if (!record || sentTo !== email) return res.json({ ok: true }); // don't reveal anything
     if (!mailer && !config.demo) return noMail(res);
     const limit = codeLimit(record); if (limit) return res.status(429).json({ error: limit });
     try {
@@ -274,45 +298,88 @@ export function mountAccounts(app, config, store) {
 
   router.post('/login', async (req, res) => {
     if (throttled(req)) return res.status(429).json({ error: 'Too many attempts. Try again in 15 minutes.' });
-    const o = owner();
-    const ok = o && lower(req.body.email) === o.email && await checkPassword(req.body.password, o.passwordHash);
-    if (!ok) { failed(req); return res.status(401).json({ error: 'Wrong email or password.' }); }
-    startSession(res); res.json({ ok: true, signedIn: true });
+    const email = lower(req.body.email), space = findByEmail(email);
+    if (space) {
+      if (!(await checkPassword(req.body.password, ownerOf(space).passwordHash))) { failed(req); return res.status(401).json({ error: 'Wrong email or password.' }); }
+      startSession(res, space); return res.json({ ok: true, signedIn: true });
+    }
+    // Not on this computer: an account that was set to follow its owner can be brought here.
+    if (cloud?.available() && email && !maySignUp(req, req.body)) {
+      const found = await cloud.fetchAccount(email, req.body.password).catch(e => { console.error('Account sync:', String(e?.message || e).slice(0, 200)); return null; });
+      if (found) {
+        const { profile, error } = validateProfile({ ...found.blob.profile, email });
+        if (!error && !findByEmail(email)) {
+          const target = newSpace();
+          target.store.kv('account:owner', { ...profile, passwordHash: await hashPassword(req.body.password), providers: {}, createdAt: Date.now(), restoredAt: Date.now() });
+          cloud.adopt(target, found);
+          startSession(res, target); return res.json({ ok: true, signedIn: true, restored: true });
+        }
+      }
+    }
+    failed(req); res.status(401).json({ error: 'Wrong email or password.' });
   });
 
-  router.post('/logout', (req, res) => { endSession(req, res); res.json({ ok: true }); });
+  // Signs out of the account in front (or, with all: true, every account in this browser).
+  router.post('/logout', (req, res) => {
+    const active = spaceFor(req);
+    for (const s of req.body?.all ? signedSpaces(req) : active ? [active] : []) endSession(req, res, s);
+    res.json({ ok: true });
+  });
 
-  // Recovery for someone who still has the owner token (for example, email isn't set up).
+  router.post('/switch', (req, res) => {
+    const space = signedSpaces(req).find(s => s.id === String(req.body?.account || ''));
+    if (!space) return res.status(401).json({ error: 'Sign in to that account first.' });
+    res.append('Set-Cookie', `${ACTIVE_COOKIE}=${space.id}; ${cookieAttrs}; Max-Age=${SESSION_TTL / 1000}`);
+    res.json({ ok: true, account: space.id });
+  });
+
+  // Recovery for someone who still has an account's owner token (for example, email isn't set up).
   router.post('/token-login', (req, res) => {
     if (throttled(req)) return res.status(429).json({ error: 'Too many attempts. Try again in 15 minutes.' });
-    if (!owner() || !equal(req.body.token, config.token)) { failed(req); return res.status(401).json({ error: 'That owner token is not right.' }); }
-    startSession(res); res.json({ ok: true, signedIn: true });
+    const space = spaces.all().find(s => ownerOf(s) && equal(req.body.token, s.config.token));
+    if (!space) { failed(req); return res.status(401).json({ error: 'That owner token is not right.' }); }
+    startSession(res, space); res.json({ ok: true, signedIn: true });
   });
 
   router.post('/reset/request', async (req, res) => {
-    const o = owner();
+    const space = findByEmail(lower(req.body.email));
     if (!mailer && !config.demo) return noMail(res);
-    if (!o || lower(req.body.email) !== o.email) return res.json({ ok: true }); // same answer either way
-    const prev = store.kv('account:reset'), limit = codeLimit(prev);
+    if (!space) return res.json({ ok: true }); // same answer either way
+    const o = ownerOf(space), prev = space.store.kv('account:reset'), limit = codeLimit(prev);
     if (limit) return res.status(429).json({ error: limit });
     try {
       const code = await sendCode(o.email, 'reset');
-      store.kv('account:reset', codeRecord(code, { email: o.email, sentAt: Date.now(), history: codeHistory(prev) }));
+      space.store.kv('account:reset', codeRecord(code, { email: o.email, sentAt: Date.now(), history: codeHistory(prev) }));
       res.json({ ok: true, ...demoCode(code) });
     } catch (e) { mailError(res, e); }
   });
 
   router.post('/reset/confirm', async (req, res) => {
-    const o = owner(), record = store.kv('account:reset');
-    if (!o || !record || record.email !== lower(req.body.email)) return res.status(400).json({ error: 'Ask for a new code.' });
+    const space = findByEmail(lower(req.body.email)), o = space && ownerOf(space), record = space?.store.kv('account:reset');
+    if (!o || !record || record.email !== o.email) return res.status(400).json({ error: 'Ask for a new code.' });
     const problem = checkCode(record, req.body.code);
-    if (problem) { store.kv('account:reset', record); return res.status(400).json({ error: problem }); }
+    if (problem) { space.store.kv('account:reset', record); return res.status(400).json({ error: problem }); }
     const problems = passwordProblems(req.body.password, { email: o.email, name: o.fullName });
     if (problems.length) return res.status(400).json({ error: `Your password needs ${problems.join(', ')}.` });
-    store.kv('account:owner', { ...o, passwordHash: await hashPassword(req.body.password) });
-    store.kv('account:reset', null);
-    store.kv('account:sessions', {}); // sign out everywhere else
-    startSession(res); res.json({ ok: true, signedIn: true });
+    space.store.kv('account:owner', { ...o, passwordHash: await hashPassword(req.body.password) });
+    space.store.kv('account:reset', null);
+    space.store.kv('account:sessions', {}); // sign out everywhere else
+    // The synced copy is locked with the password, so it is re-locked with the new one.
+    const rekeyed = cloud ? await cloud.rekey(space, req.body.password).catch(e => { console.error('Account sync:', String(e?.message || e).slice(0, 200)); return false; }) : true;
+    startSession(res, space); res.json({ ok: true, signedIn: true, ...(rekeyed === false ? { syncPaused: true } : {}) });
+  });
+
+  // Removes an account from this computer (not the first one): unlinks its WhatsApp and deletes its data here.
+  router.post('/remove-account', async (req, res) => {
+    const space = spaceFor(req);
+    if (!space) return res.status(401).json({ error: 'Sign in first.' });
+    if (throttled(req)) return res.status(429).json({ error: 'Too many attempts. Try again in 15 minutes.' });
+    if (!(await checkPassword(req.body.password, ownerOf(space).passwordHash))) { failed(req); return res.status(401).json({ error: 'Wrong password.' }); }
+    if (space.id === 'default') return res.status(400).json({ error: 'The first account on this computer can’t be removed here. Disconnect its WhatsApp instead.' });
+    endSession(req, res, space);
+    cloud?.forget(space);
+    await spaces.remove(space.id);
+    res.json({ ok: true, removed: true });
   });
 
   // ----- sign in with a provider -----
@@ -377,16 +444,17 @@ export function mountAccounts(app, config, store) {
   function finishSocial(req, res, providerId, profile) {
     const name = PROVIDERS[providerId].name;
     if (!profile?.id) return back(res, `${name} did not return an account.`);
-    const o = owner();
-    if (o) {
-      const linked = o.providers?.[providerId] === String(profile.id);
-      const sameEmail = profile.verified && lower(profile.email) === o.email;
-      if (!linked && !sameEmail) { failed(req); return back(res, `This ${name} account isn't the one that owns this bridge.`); }
-      if (!linked) store.kv('account:owner', { ...o, providers: { ...o.providers, [providerId]: String(profile.id) } });
-      startSession(res); return res.redirect(302, '/');
+    // An account already linked to this sign-in, else one with the same verified email.
+    const space = spaces.all().find(s => ownerOf(s)?.providers?.[providerId] === String(profile.id))
+      || (profile.verified ? findByEmail(lower(profile.email)) : null);
+    if (space) {
+      const o = ownerOf(space);
+      if (o.providers?.[providerId] !== String(profile.id)) space.store.kv('account:owner', { ...o, providers: { ...o.providers, [providerId]: String(profile.id) } });
+      startSession(res, space); return res.redirect(302, '/');
     }
-    // No account yet: finish signing up with the name and verified email from the provider.
-    if (localBase && !['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress || '')) return back(res, 'Create the account on the computer running Relay.');
+    // No such account here: finish signing up with the name and verified email from the provider.
+    const denied = maySignUp(req, {});
+    if (denied) { failed(req); return back(res, localBase ? denied : `This ${name} account doesn't have a Relay account on this bridge.`); }
     if (!profile.verified || !profile.email) return back(res, `${name} didn't share a verified email. Sign up with your email instead.`);
     const ticket = secret();
     pendingSocial.set(`ticket:${ticket}`, { provider: providerId, id: String(profile.id), email: lower(profile.email), name: profile.name, expires: Date.now() + 15 * 60000 });
@@ -400,5 +468,8 @@ export function mountAccounts(app, config, store) {
   });
 
   app.use('/auth', (req, res, next) => { res.set('Cache-Control', 'no-store'); next(); }, router);
-  return { sessionValid, hasAccount: () => Boolean(owner()) };
+  return {
+    spaceFor, sessionValid: req => Boolean(spaceFor(req)), hasAccount: anyOwner, ownerOf,
+    checkPassword: (space, password) => checkPassword(password, ownerOf(space)?.passwordHash),
+  };
 }

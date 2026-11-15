@@ -13,8 +13,9 @@ export function claudeDesktopConfigPath({ platform = process.platform, home = ho
 
 // How an AI app should start Relay's local MCP adapter. Absolute paths, because desktop apps
 // don't load your shell's PATH (the usual "npx not found" problem).
-export function localServerEntry(config, { packageDir = defaultPackageDir, execPath = process.execPath, platform = process.platform, env = process.env, exists = existsSync } = {}) {
-  const extra = { DATA_DIR: config.dir, ...(env.LD_LIBRARY_PATH ? { LD_LIBRARY_PATH: env.LD_LIBRARY_PATH } : {}) };
+// `account`: which Relay account on this computer the adapter talks to (leave out for the first one).
+export function localServerEntry(config, { account, packageDir = defaultPackageDir, execPath = process.execPath, platform = process.platform, env = process.env, exists = existsSync } = {}) {
+  const extra = { DATA_DIR: config.dir, ...(account ? { RELAY_ACCOUNT: account } : {}), ...(env.LD_LIBRARY_PATH ? { LD_LIBRARY_PATH: env.LD_LIBRARY_PATH } : {}) };
   if (isNpxCache(packageDir)) {
     // npx's cache can be cleared, so ask npx for the package each time instead of pointing into it.
     const npx = join(dirname(execPath), platform === 'win32' ? 'npx.cmd' : 'npx');
@@ -45,12 +46,12 @@ export function addToClaudeDesktop(config, { path = claudeDesktopConfigPath(), n
 }
 
 // Claude Code: uses its own `claude mcp add` command when it's installed.
-export function addToClaudeCode(config, { entry = localServerEntry(config), run = spawnSync } = {}) {
+export function addToClaudeCode(config, { name = 'whatsapp', entry = localServerEntry(config), run = spawnSync } = {}) {
   const found = run('claude', ['--version'], { encoding: 'utf8', shell: process.platform === 'win32' });
   if (found.error || found.status !== 0) return { installed: false };
-  run('claude', ['mcp', 'remove', '--scope', 'user', 'whatsapp'], { encoding: 'utf8', shell: process.platform === 'win32' });
+  run('claude', ['mcp', 'remove', '--scope', 'user', name], { encoding: 'utf8', shell: process.platform === 'win32' });
   const envArgs = Object.entries(entry.env || {}).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
-  const r = run('claude', ['mcp', 'add', '--scope', 'user', ...envArgs, 'whatsapp', '--', entry.command, ...entry.args], { encoding: 'utf8', shell: process.platform === 'win32' });
+  const r = run('claude', ['mcp', 'add', '--scope', 'user', ...envArgs, name, '--', entry.command, ...entry.args], { encoding: 'utf8', shell: process.platform === 'win32' });
   if (r.status !== 0) return { installed: true, added: false, error: (r.stderr || r.stdout || '').trim().split('\n').pop() };
   return { installed: true, added: true };
 }

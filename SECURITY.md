@@ -52,6 +52,15 @@ Since 1.2.0 each data folder has its own random 256-bit key, and Relay encrypts 
 - **Claude doorway:** checks `x-api-key` in constant time, reaches a same-account relay through a private service binding, accepts only the `/mcp` path, forwards only MCP headers (no cookies or other credentials), and returns only MCP response headers.
 - **Setup:** keys come from `crypto.randomBytes(32)` and are written with mode `0600`. Answers that ask for keys are hidden as you type.
 
+## Several accounts, and account sync
+
+- **Accounts on one computer are separated inside Relay, not from the computer's user.** Each account has its own folder, database, encryption key, owner token and sessions, and every dashboard, tool and MCP request is tied to exactly one account. This stops one account's sign-in or AI client from reaching another account. It does not protect accounts from someone who can already read your files as your operating-system user.
+- **Account sync is optional and off by default.** When on, the Relay Accounts service stores, under a one-way hash of your email: a SHA-256 hash of a sign-in key, a random salt, and one blob encrypted with AES-256-GCM. Both keys come from your password through scrypt on your computer. The blob holds your name, country, phone number, WhatsApp profile names and which AI apps you set up. It never holds a WhatsApp session, a message, a contact or a token.
+- **What the service operator could do.** The operator can't read the blob without your password. Like any service that stores password-derived hashes, an operator (or someone who stole the service's storage) could try guessing weak passwords offline; Relay's 12-character rule and scrypt make that expensive, and a strong unique password makes it impractical. The operator can also see when an account syncs and from which network address, and could delete or withhold the blob.
+- **Sign-in on a new computer** sends the email address and the derived sign-in key to the service, never the password. Ten wrong keys lock that account's sync sign-in for an hour. An email with no synced account gets a made-up salt and the same error, so the service can't be used to check who has an account.
+- **Your bridge keeps the two keys** in its (encrypted at rest) database so it can sync changes. Anyone who can already read that database has the account's data anyway.
+- **Turning sync off** deletes the service's copy. Other computers keep their local accounts.
+
 ## Prompt-injection safeguards
 
 Anyone who can message you can put text in front of your AI. Relay treats all WhatsApp content (message text, captions, file names, documents, transcripts, contact and group names) as **untrusted data**:

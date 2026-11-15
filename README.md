@@ -153,12 +153,39 @@ The first time you open the dashboard, you create the bridge's owner account:
 
 After that you sign in with your email and password, or with **Google, Microsoft, GitHub or Facebook** if they're set up. **Forgot password?** emails a code to reset it.
 
-- **One owner per bridge:** a bridge reads one WhatsApp account, so sign-up closes once the account exists. A local bridge only allows sign-up from the computer it runs on. A hosted bridge (`PUBLIC_URL`) also asks for the owner token once, so a stranger can't claim it first.
-- **Nothing to set up:** codes are emailed, and the sign-in buttons run, through the shared **Relay Accounts** service (`accounts-worker/`, a Cloudflare Worker). It sees only the email address, the code and which provider you used, never your password, and it stores no accounts. The account itself lives only on your bridge. The service sends your bridge back a short-lived Ed25519-signed answer, which the bridge checks with a public key built into Relay. In demo mode, codes are shown on screen.
+- **Who can create an account:** a local bridge only allows sign-up from the computer it runs on. A hosted bridge (`PUBLIC_URL`) also asks for the owner token, so a stranger can't claim it.
+- **Nothing to set up:** codes are emailed, and the sign-in buttons run, through the shared **Relay Accounts** service (`accounts-worker/`, a Cloudflare Worker). It sees only the email address, the code and which provider you used, never your password. Unless you turn on account sync (below), it stores no accounts and your account lives only on your bridge. The service sends your bridge back a short-lived Ed25519-signed answer, which the bridge checks with a public key built into Relay. In demo mode, codes are shown on screen.
 - **Running it all yourself:** set `SMTP_URL` (any SMTP server) to send codes yourself, and/or add your own `*_CLIENT_ID` and `*_CLIENT_SECRET` for each provider with the redirect URL `http://localhost:8787/auth/callback/<google|microsoft|github|facebook>` (or your `PUBLIC_URL`). `RELAY_ACCOUNTS_URL=off` turns the shared service off completely.
-- **Which sign-ins count:** a provider signs you in only if it's linked to the owner account or reports the same verified email. Microsoft emails count as verified only for personal accounts.
+- **Which sign-ins count:** a provider signs you in to an account only if it's linked to that account or reports the same verified email. Microsoft emails count as verified only for personal accounts.
 - **Security:** passwords are stored with scrypt. Sessions are HttpOnly cookies that last 30 days, and resetting the password signs out every other session. Ten wrong passwords lock sign-in for 15 minutes, and five wrong codes void a code.
 - **The owner token still exists** for local MCP clients and adapters, and as a recovery sign-in under **Use the owner token instead**. AI clients connecting with OAuth (such as ChatGPT) are approved by the signed-in account.
+
+### Several accounts on one computer
+
+One computer can hold up to five Relay accounts, for example **Business** and **Private**. Each account has its own WhatsApp profiles, messages, encryption key, owner token and AI-app approvals, in its own folder (`data/accounts/<id>/`; the first account keeps using `data/`). Nothing in one account can be read from another.
+
+- **Add one:** in the dashboard's account menu (bottom left) choose **Use another account…**, then sign in or **Create another account**. Each account needs its own email.
+- **Switch:** pick the account in the same menu. A browser can stay signed in to several accounts; **Sign out** signs out of the one in front.
+- **Claude:** **Add to Claude Desktop** adds the account in front. The first account appears in Claude as `whatsapp`, and further ones as `whatsapp-<email>`, so Claude can use both and you can say which one you mean.
+- **ChatGPT and other OAuth clients:** an approval belongs to the account that was in front when you approved it, and the client reaches only that account's WhatsApp.
+- **Remove one:** **Connections → This account → Remove this account from this computer** (asks for its password). The first account can't be removed this way.
+- The optional Cloudflare relay ([Use it from anywhere](#use-it-from-anywhere-optional)) serves the first account only.
+
+### Use an account on another computer (optional)
+
+Off by default. In **Connections → Use this account on other computers**, enter your password and the 6-digit code Relay emails you. After that, signing in to Relay on another computer with the same email and password brings the account there.
+
+| | |
+| --- | --- |
+| **What travels** | Your name, country and phone number, the names of your WhatsApp profiles, and which AI apps you set up. |
+| **What never travels** | Your password, the WhatsApp link itself, messages, contacts, media, and AI-app tokens. |
+
+- **Each computer links WhatsApp once.** WhatsApp's link can't be copied between computers (copying it breaks the link on both), so the new computer shows a short checklist: scan a QR code for each profile, and click **Add to Claude Desktop** again. ChatGPT connectors live in your ChatGPT account and point at one bridge's address, so they don't move by themselves.
+- **The service can't read it.** Relay makes two keys from your password on your computer. One proves who you are to the Relay Accounts service, which keeps only a hash of it. The other encrypts the synced copy and never leaves your computers. See [SECURITY.md](SECURITY.md) for the limits of this.
+- **Changes** to profile names travel both ways. A profile removed on one computer stays linked on the others until you remove it there too.
+- **Password changes:** resetting your password on a computer that has the account re-locks the synced copy with the new password. If you forget the password and no computer still has the account, the synced copy can't be opened; turn sync on again from a new account with the same email to replace it.
+- **Turning it off** deletes the service's copy. `RELAY_ACCOUNTS_URL=off` disables it, and when it is off or you have no account on this computer with the email you typed, a failed sign-in is all that happens.
+- When this is available, signing in with an email that has no account on this computer asks the service whether a synced account exists for it. That request carries the email address and a key derived from the password you typed, never the password.
 
 ### Keep it running
 

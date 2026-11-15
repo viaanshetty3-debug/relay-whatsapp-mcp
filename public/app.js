@@ -17,7 +17,17 @@ const authHeaders=()=>token?{Authorization:'Bearer '+token}:{};
 const withProfile=path=>path+(path.includes('?')?'&':'?')+'profile='+encodeURIComponent(profile);
 async function tool(name,args={}){return (await api('/api/tools/'+name,args)).result;}
 function guarded(fn){return (...args)=>{if(args[0]?.type==='submit')args[0].preventDefault();return Promise.resolve().then(()=>fn(...args)).catch(e=>toast(e.message));};}
-function lock(){streamAbort?.abort();clearTimeout(refreshTimer);$('#media-dialog').close();clearMedia();const hadToken=Boolean(token);token='';sessionStorage.removeItem('relay-token');$('#workspace').hidden=true;$('#login').hidden=false;$('#token').value='';if(!hadToken)fetch('/auth/logout',{method:'POST'}).catch(()=>{});showAuth().catch(()=>{});}
+function lock(){streamAbort?.abort();clearTimeout(refreshTimer);$('#media-dialog').close();clearMedia();const hadToken=Boolean(token);token='';sessionStorage.removeItem('relay-token');$('#workspace').hidden=true;$('#login').hidden=false;$('#token').value='';resetWorkspace();
+  // Signing out leaves this browser's other accounts signed in; the next one comes to the front.
+  (hadToken?Promise.resolve():fetch('/auth/logout',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).catch(()=>{})).then(()=>showAuth()).catch(()=>{});}
+// Clears everything on screen that belongs to one account or WhatsApp profile.
+function resetWorkspace(){
+  profile='main';try{localStorage.setItem('relay-profile',profile);}catch{}
+  streamAbort?.abort();clearTimeout(refreshTimer);selected=null;replyTo=null;editing=null;events=[];chats=[];$('#message-input').value='';$('#reply-bar').hidden=true;
+  $('#view-inbox').classList.remove('chat-open');$('#search-results').hidden=true;$('#messages').hidden=false;$('#chat-list').innerHTML='';
+  $('#chat-header').innerHTML='<div><span class="eyebrow">YOUR INBOX, IN SYNC</span><h2>Select a conversation</h2></div>';
+  $('#messages').innerHTML='<div class="empty"><div class="empty-symbol">↗</div><h2>Choose a conversation.</h2><p>Showing chats for this account.</p></div>';
+}
 function paintStatus(){
   const badge=$('#connection-state');badge.textContent=state.state==='connected'?'Connected':state.state==='pairing'?'Ready to pair':state.state==='connecting'?'Connecting…':'Disconnected';badge.classList.toggle('connected',state.state==='connected');
   $('#connect').textContent=state.state==='connected'?'Manage connection ↗':'Connect WhatsApp ↗';$('#demo-badge').hidden=!state.demo;$('#read-only').textContent=state.readOnly?'· Read-only mode':'';
@@ -29,7 +39,7 @@ function paintStatus(){
   if(['logged_out','disconnected'].includes(state.state))$('#pair-code').textContent='';
   if($('#pair-dialog').open){
     if(state.state==='connected'){$('#qr-area').innerHTML='<p>Your WhatsApp account is connected.</p>';}
-    else if(state.qr)$('#qr-area').innerHTML=`<img src="${escape(state.qr)}" alt="WhatsApp pairing QR code">`;
+    else if(state.qr)$('#qr-area').innerHTML=`<img src="${escape(state.qr)}" alt="WhatsApp pairing QR code">${state.demo?'<p class="muted"><strong>Practice mode:</strong> there is nothing to scan. Relay links the sample WhatsApp by itself in a few seconds.</p>':''}`;
     else $('#qr-area').innerHTML=`<p>${escape(state.error || (state.state==='connecting'?'Connecting to WhatsApp…':'Waiting for a pairing QR…'))}</p>`;
   }
 }
@@ -38,7 +48,7 @@ async function loadState(){
   const toMain=async()=>{profile='main';try{localStorage.setItem('relay-profile',profile);}catch{}return api('/api/state');};
   try{state=await api('/api/state');}catch(e){if(profile==='main'||!/No WhatsApp profile/.test(e.message))throw e;state=await toMain();}
   if(state.profiles&&!state.profiles.some(p=>p.id===profile))state=await toMain();
-  paintStatus();paintProfiles();
+  paintStatus();paintProfiles();paintSetup();
 }
 // ----- WhatsApp profiles -----
 const STATE_DOT={connected:'●',connecting:'◌',pairing:'◌'};
@@ -86,9 +96,69 @@ $('#profile-remove').addEventListener('click',async()=>{
   catch(err){$('#profile-error').textContent=err.message;}
 });
 async function openWorkspace(){
+  if(addingAccount){addingAccount=false;resetWorkspace();}$('#auth-back').hidden=true;
   await loadState();if(token)sessionStorage.setItem('relay-token',token);if(afterLogin())return;$('#login').hidden=true;$('#workspace').hidden=false;
   await refreshChats();renderIntegrations();renderToolCatalog();startEvents();
+  paintAccounts().catch(()=>{});renderSync().catch(()=>{});
 }
+// ----- several accounts on this computer -----
+let addingAccount=false;
+async function paintAccounts(){
+  const select=$('#account-select');if(token){select.hidden=true;return;}
+  auth=await (await fetch('/auth/status')).json();const list=auth.accounts||[];
+  select.innerHTML=list.map(a=>`<option value="${escape(a.id)}">${escape(a.email)}</option>`).join('')+(auth.canAdd?'<option value="__add">＋ Use another account…</option>':'');
+  select.value=auth.account||'';select.hidden=!list.length;
+}
+$('#account-select').addEventListener('change',guarded(async e=>{
+  const id=e.target.value;
+  if(id==='__add'){ // sign in to (or create) another account without signing out of this one
+    e.target.value=auth.account||'';addingAccount=true;streamAbort?.abort();clearTimeout(refreshTimer);
+    $('#workspace').hidden=true;$('#login').hidden=false;panel('signin');paintSocial('Continue');$('#add-account-link').hidden=!auth.canAdd;$('#auth-back').hidden=false;$('#signin-email').value='';return;
+  }
+  await authPost('switch',{account:id});resetWorkspace();showView('inbox');await openWorkspace();toast('Switched to '+(auth.accounts?.find(a=>a.id===id)?.email||'the other account'));
+}));
+$('#auth-back').addEventListener('click',guarded(async()=>{addingAccount=false;await openWorkspace();}));
+const clearSignup=()=>{$('#signup-form').reset();$('#signup-email').readOnly=false;signupTicket='';$('#verify-code').value='';const guess=(navigator.language||'').split('-')[1];if(guess&&[...$('#signup-country').options].some(o=>o.value===guess))$('#signup-country').value=guess;paintRules();};
+$('#add-account-link').addEventListener('click',()=>{clearSignup();panel('signup');paintSocial('Sign up');$('#setup-token-label').hidden=!auth.hostedSetup;$('#signup-back').hidden=false;$('#signup-note').textContent='This adds a separate account to this computer, with its own WhatsApp and AI connections. Use a different email from your other account.';});
+$('#signup-back').addEventListener('click',()=>{panel('signin');paintSocial('Continue');});
+// ----- an account that follows you to other computers -----
+async function renderSync(){
+  const card=$('#sync-card');let s;try{s=await api('/api/sync');}catch{card.hidden=true;return;}
+  card.hidden=!s.available;if(!s.available)return;
+  $('#sync-start-form').hidden=s.on||s.waitingForCode;$('#sync-code-form').hidden=!s.waitingForCode;$('#sync-actions').hidden=!s.on;
+  $('#sync-text').textContent=s.on?`On for ${s.email}. On another computer, sign in to Relay with the same email and password, and this account’s profiles and settings appear there.`:s.waitingForCode?'We emailed you a 6-digit code. Enter it to finish.':'Off. Turn it on to sign in to this account from another computer.';
+  $('#sync-note').textContent=s.problem||(s.on?'Each computer links WhatsApp once with its own QR code. Your messages stay on your computers. The synced copy is locked with your password, so the Relay Accounts service can’t read it.':'What travels: your name, country and phone, your WhatsApp profile names, and which AI apps you set up, locked with your password. Your messages and the WhatsApp link itself stay on this computer.');
+}
+$('#sync-start-form').addEventListener('submit',guarded(async()=>{const s=await api('/api/sync/start',{password:$('#sync-password').value});$('#sync-password').value='';await renderSync();toast(s.on?'This account now follows you to other computers.':'We emailed you a code.');}));
+$('#sync-code-form').addEventListener('submit',guarded(async()=>{
+  const code=$('#sync-code').value.trim();
+  try{await api('/api/sync/confirm',{code});}
+  catch(e){if(!/replace the synced copy/.test(e.message)||!confirm(e.message+'\n\nReplace the synced copy with this computer’s account?'))throw e;await api('/api/sync/confirm',{code,replace:true});}
+  $('#sync-code').value='';await renderSync();toast('This account now follows you to other computers.');
+}));
+$('#sync-now').addEventListener('click',guarded(async()=>{await api('/api/sync/now',{});await loadState();await renderSync();toast('Synced');}));
+$('#sync-off').addEventListener('click',guarded(async()=>{if(!confirm('Turn this off and delete the synced copy? Your account stays on this computer. Other computers keep their own copy.'))return;await api('/api/sync/off',{});await renderSync();toast('Turned off. The synced copy was deleted.');}));
+// The checklist shown after an account arrives on a new computer.
+function paintSetup(){
+  const el=$('#setup-banner'),s=state.setup;el.hidden=!s;if(!s)return;
+  const todo=(state.profiles||[]).filter(p=>p.state!=='connected');
+  const apps=[['claudeDesktop','claude-desktop','Claude Desktop'],['claudeCode','claude-code','Claude Code']].filter(([key])=>s.aiApps[key]&&!s.here[key]);
+  el.innerHTML='<strong>Welcome back.</strong> This account came from your other computer. To finish on this one: '
+    +(todo.length?'link WhatsApp for '+todo.map(p=>`<button class="quiet" data-link="${escape(p.id)}">${escape(p.name)} ↗</button>`).join(' '):'WhatsApp is linked.')
+    +apps.map(([,app,label])=>` <button class="quiet" data-app="${app}">Add Relay to ${label} ↗</button>`).join('')
+    +' <button class="quiet" data-done>Hide this</button><br><span class="muted">Each computer links WhatsApp with its own QR code. Your messages were not copied here.</span>';
+}
+$('#setup-banner').addEventListener('click',guarded(async e=>{
+  const b=e.target.closest('button');if(!b)return;
+  if(b.dataset.link){if(b.dataset.link!==profile)await switchProfile(b.dataset.link);if(state.state!=='connected'&&state.state!=='pairing')await connect();}
+  else if(b.dataset.app){await addLocalApp(b.dataset.app);await loadState();}
+  else if('done' in b.dataset){await api('/api/setup/done',{});await loadState();}
+}));
+$('#remove-account-form').addEventListener('submit',guarded(async()=>{
+  if(!confirm('Remove this account from this computer? Its WhatsApp will be unlinked and its messages here deleted. This can’t be undone.'))return;
+  await authPost('remove-account',{password:$('#remove-account-password').value});$('#remove-account-password').value='';
+  streamAbort?.abort();$('#workspace').hidden=true;$('#login').hidden=false;resetWorkspace();await showAuth();
+}));
 $('#login-form').addEventListener('submit',async e=>{e.preventDefault();token=$('#token').value.trim();try{await openWorkspace();}catch(err){$('#login-error').textContent=err.message;}});
 $('#logout').addEventListener('click',lock);
 // ----- account sign-in, sign-up, email code and password reset -----
@@ -113,7 +183,7 @@ function paintSocial(verb){
 }
 async function showAuth(){
   auth=await (await fetch('/auth/status')).json();
-  if(auth.signedIn)return openWorkspace();
+  if(auth.signedIn&&!addingAccount)return openWorkspace();
   const ticket=params.get('signup');
   if(!auth.hasAccount){
     panel('signup');paintSocial('Sign up');$('#setup-token-label').hidden=!auth.hostedSetup;
@@ -125,8 +195,9 @@ async function showAuth(){
     // No way to email a code right now: offer the sign-in buttons instead of a form that can't finish.
     const social=(auth.providers||[]).length,noEmail=!auth.emailReady&&!signupTicket&&social>0;
     $('#signup-form').hidden=noEmail;if(noEmail)document.querySelectorAll('#auth-signup [data-social-or]').forEach(e=>e.hidden=true);
-    if(!auth.emailReady&&!signupTicket)$('#signup-note').textContent=social?'Sign up with one of these accounts. Email sign-up is unavailable right now.':'One account owns this bridge. Relay can\'t send email codes here: set SMTP_URL in .env (see README) so Relay can send your code.';
-  }else{panel('signin');paintSocial('Continue');}
+    if(!auth.emailReady&&!signupTicket)$('#signup-note').textContent=social?'Sign up with one of these accounts. Email sign-up is unavailable right now.':'Relay can\'t send email codes here: set SMTP_URL in .env (see README) so Relay can send your code.';
+  }else{panel('signin');paintSocial('Continue');$('#add-account-link').hidden=!auth.canAdd;}
+  $('#signin-note').hidden=!auth.cloud;
   if(params.get('auth_error'))$('#login-error').textContent=params.get('auth_error');
 }
 const run=fn=>async e=>{e.preventDefault();$('#login-error').textContent='';const btn=e.target.querySelector('button');if(btn)btn.disabled=true;try{await fn(e);}catch(err){$('#login-error').textContent=err.message;}finally{if(btn)btn.disabled=false;}};
@@ -137,10 +208,10 @@ $('#signup-form').addEventListener('submit',run(async()=>{
   if($('#signup-password').value!==$('#signup-confirm').value)throw new Error('The passwords don\'t match.');
   const body={fullName:$('#signup-name').value,country:$('#signup-country').value,phone:$('#signup-phone').value,email:$('#signup-email').value,password:$('#signup-password').value,setupToken:$('#signup-setup-token').value||undefined,ticket:signupTicket||undefined};
   const r=await authPost('signup',body);
-  if(r.signedIn){history.replaceState(null,'',location.pathname+(safeNext()?'?next='+encodeURIComponent(safeNext()):''));return openWorkspace();}
-  pendingEmail=r.email;$('#verify-email').textContent=r.email;$('#demo-code').hidden=!r.demoCode;$('#demo-code').textContent=r.demoCode?`Demo mode: your code is ${r.demoCode}`:'';panel('verify');$('#verify-code').focus();
+  if(r.signedIn){history.replaceState(null,'',location.pathname+(safeNext()?'?next='+encodeURIComponent(safeNext()):''));clearSignup();return openWorkspace();}
+  pendingEmail=r.email;$('#verify-code').value='';$('#verify-email').textContent=r.email;$('#demo-code').hidden=!r.demoCode;$('#demo-code').textContent=r.demoCode?`Demo mode: your code is ${r.demoCode}`:'';panel('verify');$('#verify-code').focus();
 }));
-$('#verify-form').addEventListener('submit',run(async()=>{await authPost('verify',{email:pendingEmail,code:$('#verify-code').value.trim(),setupToken:$('#signup-setup-token').value||undefined});$('#signup-password').value=$('#signup-confirm').value='';await openWorkspace();}));
+$('#verify-form').addEventListener('submit',run(async()=>{await authPost('verify',{email:pendingEmail,code:$('#verify-code').value.trim(),setupToken:$('#signup-setup-token').value||undefined});clearSignup();await openWorkspace();}));
 $('#resend-code').addEventListener('click',()=>authPost('resend',{email:pendingEmail}).then(r=>{if(r.demoCode){$('#demo-code').hidden=false;$('#demo-code').textContent=`Demo mode: your code is ${r.demoCode}`;}toast('A new code is on its way.');}).catch(e=>$('#login-error').textContent=e.message));
 $('#reset-request-form').addEventListener('submit',run(async()=>{const r=await authPost('reset/request',{email:$('#reset-email').value});$('#reset-request-form').hidden=true;$('#reset-confirm-form').hidden=false;$('#reset-demo-code').hidden=!r.demoCode;$('#reset-demo-code').textContent=r.demoCode?`Demo mode: your code is ${r.demoCode}`:'';}));
 $('#reset-confirm-form').addEventListener('submit',run(async()=>{await authPost('reset/confirm',{email:$('#reset-email').value,code:$('#reset-code').value.trim(),password:$('#reset-password').value});$('#reset-password').value='';await openWorkspace();}));
@@ -307,6 +378,8 @@ function renderIntegrations(){
   if(state.remote?.published){$('#remote-instructions').textContent='Your private HTTPS relay is live. Open account setup to use the installed ChatGPT plugin and add Claude’s custom web connector.';$('#remote-note').textContent='This is Claude’s MCP address. ChatGPT uses the private Relay plugin. Keep the Mac awake and online.';}
   $('#claude-config').textContent=JSON.stringify(state.localConfig,null,2);
   $('#local-apps').hidden=!state.localApps;
+  $('#account-box').hidden=!state.account?.email;$('#account-line').textContent=state.account?.email?`Signed in as ${state.account.email}.`+(state.account.first?'':' Claude sees this account’s WhatsApp as “'+Object.keys(state.localConfig?.mcpServers||{})[0]+'”.'):'';
+  $('#remove-account-form').hidden=!state.account||state.account.first||Boolean(token);
 }
 async function addLocalApp(app){
   const r=await api('/api/local-apps/'+app,{}),out=$('#local-apps-result');out.hidden=false;

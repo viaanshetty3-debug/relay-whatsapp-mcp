@@ -161,3 +161,74 @@ test('only the configured sending account can connect Gmail', async () => {
   assert.equal((await call(env, `/admin/gmail/callback?code=c&state=${state}`, {}, as('Sender@Example.com'))).status, 200);
   assert.equal((await (await call(env, '/health')).json()).email, true);
 });
+
+// ----- optional account sync -----
+const acct = (env, path, body, google) => call(env, '/account/' + path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': '198.51.100.7' }, body: JSON.stringify(body) }, google);
+async function syncEnv() {
+  const { env } = makeEnv({ GOOGLE_CLIENT_ID: 'g', GOOGLE_CLIENT_SECRET: 's' }), codes = [];
+  await env.STORE.get('vault').fetch('https://store/gmail', { method: 'PUT', body: JSON.stringify({ refresh_token: 'r' }) });
+  const google = async (url, init) => {
+    if (String(url).includes('oauth2.googleapis.com')) return Response.json({ access_token: 't' });
+    codes.push(/code is (\d{6})/.exec(Buffer.from(JSON.parse(init.body).raw, 'base64url').toString('utf8'))[1]);
+    return Response.json({ id: '1' });
+  };
+  return { env, codes, google };
+}
+const KEY = 'k'.repeat(43), KEY2 = 'm'.repeat(43), SALT = 's'.repeat(22), BLOB = 'v1.' + 'i'.repeat(16) + '.' + 'c'.repeat(40);
+
+test('account sync: an emailed code creates the copy; only the right key reads, saves, re-locks or deletes it', async () => {
+  const { env, codes, google } = await syncEnv(), email = 'Ada@Example.com';
+  assert.equal((await acct(env, 'register', { email, code: '123456', salt: SALT, auth: KEY, blob: BLOB })).status, 400, 'no code was sent yet');
+  assert.equal((await acct(env, 'start', { email }, google)).status, 200);
+  const wrong = codes[0] === '000000' ? '111111' : '000000';
+  assert.equal((await acct(env, 'register', { email, code: wrong, salt: SALT, auth: KEY, blob: BLOB })).status, 400);
+  for (const bad of [{ blob: 'plain text' }, { blob: 'v1.' + 'i'.repeat(16) + '.' + 'c'.repeat(70000) }, { auth: 'short' }, { salt: '!' }])
+    assert.equal((await acct(env, 'register', { email, code: codes[0], salt: SALT, auth: KEY, blob: BLOB, ...bad })).status, 400, JSON.stringify(Object.keys(bad)));
+  let r = await acct(env, 'register', { email, code: codes[0], salt: SALT, auth: KEY, blob: BLOB });
+  assert.equal(r.status, 200); assert.equal((await r.json()).rev, 1);
+  assert.equal((await acct(env, 'register', { email, code: codes[0], salt: SALT, auth: KEY, blob: BLOB })).status, 400, 'a code works once');
+
+  // The salt of a real account, and a stable made-up one for an email that has none.
+  assert.equal((await (await acct(env, 'salt', { email: 'ada@example.com' })).json()).salt, SALT);
+  const fake1 = (await (await acct(env, 'salt', { email: 'nobody@example.com' })).json()).salt, fake2 = (await (await acct(env, 'salt', { email: 'nobody@example.com' })).json()).salt;
+  assert.equal(fake1, fake2); assert.match(fake1, /^[\w-]{22}$/); assert.notEqual(fake1, SALT);
+  assert.deepEqual(await (await acct(env, 'login', { email: 'nobody@example.com', auth: KEY })).json(), await (await acct(env, 'login', { email, auth: KEY2 })).json(), 'unknown email and wrong key look the same');
+
+  r = await (await acct(env, 'login', { email, auth: KEY })).json();
+  assert.deepEqual(r, { ok: true, salt: SALT, blob: BLOB, rev: 1 });
+  const BLOB2 = BLOB.replace(/c/g, 'd');
+  assert.equal((await acct(env, 'save', { email, auth: KEY2, rev: 1, blob: BLOB2 })).status, 401);
+  assert.equal((await (await acct(env, 'save', { email, auth: KEY, rev: 1, blob: BLOB2 })).json()).rev, 2);
+  r = await acct(env, 'save', { email, auth: KEY, rev: 1, blob: BLOB });
+  assert.equal(r.status, 409, 'an out-of-date save is refused'); assert.deepEqual(await r.json(), { error: 'Out of date.', blob: BLOB2, rev: 2 });
+
+  // A second sign-up for the same email needs a fresh code and an explicit "replace".
+  await acct(env, 'start', { email }, google);
+  r = await acct(env, 'register', { email, code: codes[1], salt: SALT, auth: KEY2, blob: BLOB });
+  assert.equal(r.status, 409); assert.equal((await r.json()).exists, true);
+  assert.equal((await acct(env, 'login', { email, auth: KEY })).status, 200, 'the copy is untouched');
+
+  assert.equal((await acct(env, 'rekey', { email, auth: KEY, salt: 'n'.repeat(22), newAuth: KEY2, blob: BLOB })).status, 200);
+  assert.equal((await acct(env, 'login', { email, auth: KEY })).status, 401);
+  assert.equal((await acct(env, 'login', { email, auth: KEY2 })).status, 200);
+  assert.equal((await acct(env, 'delete', { email, auth: KEY })).status, 401);
+  assert.equal((await acct(env, 'delete', { email, auth: KEY2 })).status, 200);
+  assert.equal((await acct(env, 'login', { email, auth: KEY2 })).status, 401);
+  assert.equal((await acct(env, 'nonsense', { email, auth: KEY2 })).status, 404);
+  assert.equal((await acct(env, 'login', { email: 'not-an-email', auth: KEY })).status, 400);
+});
+
+test('account sync: guessing the key locks that account for an hour, even for the right key', async () => {
+  const { env, codes, google } = await syncEnv(), email = 'ada@example.com';
+  await acct(env, 'start', { email }, google);
+  await acct(env, 'register', { email, code: codes[0], salt: SALT, auth: KEY, blob: BLOB });
+  for (let i = 0; i < 10; i++) assert.equal((await acct(env, 'login', { email, auth: KEY2 })).status, 401);
+  assert.equal((await acct(env, 'login', { email, auth: KEY2 })).status, 429);
+  assert.equal((await acct(env, 'login', { email, auth: KEY })).status, 429);
+  // Five wrong codes end a sign-up attempt.
+  const other = 'bob@example.com';
+  await acct(env, 'start', { email: other }, google);
+  const wrong = codes[1] === '000000' ? '111111' : '000000';
+  for (let i = 0; i < 5; i++) await acct(env, 'register', { email: other, code: wrong, salt: SALT, auth: KEY, blob: BLOB });
+  assert.match((await (await acct(env, 'register', { email: other, code: codes[1], salt: SALT, auth: KEY, blob: BLOB })).json()).error, /Too many wrong codes/);
+});
