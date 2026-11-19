@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.3.0 — 2026-11-19
 
 ### Added
 - **Sign in or create an account from the same page.** The sign-in page now has **Sign in** and **Create account** tabs, on a brand-new computer too, so an account made elsewhere can be opened straight away.
