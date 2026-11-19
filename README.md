@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node.js ≥ 22.13](https://img.shields.io/badge/node-%E2%89%A5%2022.13-339933.svg?logo=node.js&logoColor=white)](https://nodejs.org)
 [![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#auto-start-on-login)
-[![MCP tools](https://img.shields.io/badge/MCP%20tools-38-8A2BE2.svg)](#tool-reference)
+[![MCP tools](https://img.shields.io/badge/MCP%20tools-44-8A2BE2.svg)](#tool-reference)
 [![Security policy](https://img.shields.io/badge/security-policy-green.svg)](SECURITY.md)
 [![npm](https://img.shields.io/npm/v/relay-whatsapp-mcp.svg)](https://www.npmjs.com/package/relay-whatsapp-mcp)
 
@@ -21,7 +21,7 @@
 
 **Why people use it:** free and self-hosted, works with Claude and ChatGPT, several WhatsApp accounts in one place, nothing sent without you asking, and a standby that takes over in seconds if your computer sleeps.
 
-**[💬 Ask Relay AI (Free Live Assistant)](https://relay-docs-ai.viaan-mcp.workers.dev)**: a help page with a searchable troubleshooting guide and an AI chat sidebar for questions about setup, failover, the 38 tools or security. It's free, with no login or key, and each visitor's chat stays private in their own browser. Answers come from these docs via Google Gemini and can be wrong. If Gemini isn't available, it answers from a docs search instead.
+**[💬 Ask Relay AI (Free Live Assistant)](https://relay-docs-ai.viaan-mcp.workers.dev)**: a help page with a searchable troubleshooting guide and an AI chat sidebar for questions about setup, failover, the 44 tools or security. It's free, with no login or key, and each visitor's chat stays private in their own browser. Answers come from these docs via Google Gemini and can be wrong. If Gemini isn't available, it answers from a docs search instead.
 
 ## Quickstart with npx
 
@@ -83,7 +83,7 @@ You don't need the hosted part: a single bridge with Claude Desktop or Claude Co
 
 ## Why Relay
 
-### 38 WhatsApp tools, not just "send a message"
+### 44 WhatsApp tools, not just "send a message"
 Read and search history, follow live events with a durable cursor, download and **analyse attachments up to 500 MB** (local transcription, PDF/OCR, video frames, optional local vision), send and reply, edit, delete, react, forward, polls, drafts, scheduled messages, groups and presence. [Full reference ↓](#tool-reference)
 
 ### Failover in about 4–6 seconds, never sending twice
@@ -145,13 +145,19 @@ One Relay can hold up to 10 WhatsApp accounts, for example personal and work. In
 
 ### Dashboard sign-in
 
-The first time you open the dashboard, you create the bridge's owner account:
+The sign-in page has two tabs, **Sign in** and **Create account**. Both work in two ways:
 
-1. Enter your **full name, country, phone number** (with its country code) and **email**.
-2. Choose a **strong password**: 12+ characters with upper and lower case, a number and a symbol. It can't contain your name or email, and the form shows each rule as you type.
-3. Relay emails a **6-digit code** to confirm your email. Enter it, and you're in.
+- **With Google, Microsoft, GitHub or Facebook** (whichever are set up): one click, with no form, phone number or emailed code. Relay takes your name and verified email from the provider. The first time, you choose a **passcode** (at least 8 characters). After that the provider button proves who you are and the passcode opens your chats.
+- **With your email:**
+  1. Enter your **full name, country, phone number** (with its country code) and **email**.
+  2. Choose a **strong password**: 12+ characters with upper and lower case, a number and a symbol. It can't contain your name or email, and the form shows each rule as you type.
+  3. Relay emails a **6-digit code** to confirm your email. Enter it, and you're in.
 
-After that you sign in with your email and password, or with **Google, Microsoft, GitHub or Facebook** if they're set up. **Forgot password?** emails a code to reset it.
+**Already made an account on another computer?** Use the **Sign in** tab the same way you created it. If you turned on [account sync](#use-an-account-on-another-computer-optional) there, your settings come along: with email and password directly, or with the provider button followed by **I already use this account on another computer** and your passcode.
+
+**The page locks itself after 15 minutes without use** and asks for your password or passcode again. This applies to every account.
+
+**Forgot password?** (or **Forgot passcode?**) emails a code to set a new one.
 
 - **Who can create an account:** a local bridge only allows sign-up from the computer it runs on. A hosted bridge (`PUBLIC_URL`) also asks for the owner token, so a stranger can't claim it.
 - **Nothing to set up:** codes are emailed, and the sign-in buttons run, through the shared **Relay Accounts** service (`accounts-worker/`, a Cloudflare Worker). It sees only the email address, the code and which provider you used, never your password. Unless you turn on account sync (below), it stores no accounts and your account lives only on your bridge. The service sends your bridge back a short-lived Ed25519-signed answer, which the bridge checks with a public key built into Relay. In demo mode, codes are shown on screen.
@@ -164,20 +170,20 @@ After that you sign in with your email and password, or with **Google, Microsoft
 
 One computer can hold up to five Relay accounts, for example **Business** and **Private**. Each account has its own WhatsApp profiles, messages, encryption key, owner token and AI-app approvals, in its own folder (`data/accounts/<id>/`; the first account keeps using `data/`). Nothing in one account can be read from another.
 
-- **Add one:** in the dashboard's account menu (bottom left) choose **Use another account…**, then sign in or **Create another account**. Each account needs its own email.
+- **Add one:** in the dashboard's account menu (bottom left) choose **Use another account…**, then use the **Sign in** or **Create account** tab. Each account needs its own email.
 - **Switch:** pick the account in the same menu. A browser can stay signed in to several accounts; **Sign out** signs out of the one in front.
 - **Claude:** **Add to Claude Desktop** adds the account in front. The first account appears in Claude as `whatsapp`, and further ones as `whatsapp-<email>`, so Claude can use both and you can say which one you mean.
 - **ChatGPT and other OAuth clients:** an approval belongs to the account that was in front when you approved it, and the client reaches only that account's WhatsApp.
-- **Remove one:** **Connections → This account → Remove this account from this computer** (asks for its password). The first account can't be removed this way.
+- **Remove one:** **Connections → This account → Remove this account from this computer** (asks for its password or passcode). The first account can't be removed this way.
 - The optional Cloudflare relay ([Use it from anywhere](#use-it-from-anywhere-optional)) serves the first account only.
 
 ### Use an account on another computer (optional)
 
-Off by default. In **Connections → Use this account on other computers**, enter your password and the 6-digit code Relay emails you. After that, signing in to Relay on another computer with the same email and password brings the account there.
+Off by default. In **Connections → Use this account on other computers**, enter your password and the 6-digit code Relay emails you. For an account made with Google, GitHub and so on, the passcode goes where the password would. After that, signing in to Relay on another computer with the same email and password brings the account there.
 
 | | |
 | --- | --- |
-| **What travels** | Your name, country and phone number, the names of your WhatsApp profiles, and which AI apps you set up. |
+| **What travels** | Your name (and country and phone number, if you gave them), the names of your WhatsApp profiles, and which AI apps you set up. |
 | **What never travels** | Your password, the WhatsApp link itself, messages, contacts, media, and AI-app tokens. |
 
 - **Each computer links WhatsApp once.** WhatsApp's link can't be copied between computers (copying it breaks the link on both), so the new computer shows a short checklist: scan a QR code for each profile, and click **Add to Claude Desktop** again. ChatGPT connectors live in your ChatGPT account and point at one bridge's address, so they don't move by themselves.
@@ -268,7 +274,13 @@ On a second computer: clone, `npm install`, `npm run setup`, and choose **2) sta
 | `delete_message` | 🔴 | Delete your own message for everyone |
 | `react_message` | 🟡 | Add or remove an emoji reaction |
 | `forward_message` | 🟡 | Forward a message to another permitted chat |
+| `star_message` | 🟡 | Star or unstar a message |
+| `pin_message` | 🟡 | Pin a message to the top of its chat (24 hours, 7 or 30 days) or unpin it |
+| `delete_message_for_me` | 🔴 | Remove a message from your own view only |
+| `message_info` | 🟢 | When a message was sent and who it was delivered to and read by |
 | `create_poll` | 🟡 | Create a poll |
+| `send_event` | 🟡 | Send an event invitation (name, start, optional end) |
+| `send_contact` | 🟡 | Send a contact card |
 | `mark_read` | 🟡 | Send read receipts for specific messages, only when you ask |
 | **Media** | | |
 | `list_media` | 🟢 | Find photos, videos, voice notes, stickers and documents in history |
@@ -388,7 +400,7 @@ Before release, the full path (a Claude-style MCP client → Cloudflare doorway 
 | Check | Result |
 | --- | --- |
 | Wrong `x-api-key` | rejected (401) |
-| `initialize`, `tools/list` | 38 tools |
+| `initialize`, `tools/list` | 44 tools |
 | Tool call round trip (`status`, `list_chats`, `send_message`, `search_messages`) | ~0.4–0.8 s each |
 | Same `send_message` `requestId` sent twice | one message |
 | Primary frozen (like a closed laptop lid) | standby took over after **4.0 s** and **5.3 s** in two runs; a request already claimed by the frozen primary was handed over and answered in 5.8 s |

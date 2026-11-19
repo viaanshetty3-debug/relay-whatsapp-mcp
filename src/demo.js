@@ -27,8 +27,8 @@ export class DemoWhatsApp extends EventEmitter {
   raw(c,id){const m=this.store.getMessage(c,id);return m&&JSON.parse(m.raw);}
   async send(chat,content) {
     this.connected();
-    if(content.edit||content.delete||content.react)return {chat,id:randomUUID(),status:'demo_submitted'};
-    const m=this.insert(chat,content.text || content.caption || content.poll?.name || '[attachment]',true);
+    if(content.edit||content.delete||content.react||content.pin)return {chat,id:randomUUID(),status:'demo_submitted'};
+    const m=this.insert(chat,content.text || content.caption || content.poll?.name || (content.event&&'📅 '+content.event.name) || (content.contacts&&'👤 '+content.contacts.displayName) || '[attachment]',true);
     this.store.put('chats',{id:chat,preview:m.text,conversationTimestamp:m.timestamp});return {id:m.id,chat,key:m.key,status:'demo_submitted'};
   }
   async download(){throw new Error('The demo does not contain downloadable media');}

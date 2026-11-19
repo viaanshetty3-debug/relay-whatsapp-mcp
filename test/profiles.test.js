@@ -118,7 +118,7 @@ test('profiles over HTTP: dashboard routes pick a profile, and one MCP connectio
   await client.connect(new StreamableHTTPClientTransport(new URL(base + '/mcp'), { requestInit: { headers: { Authorization: 'Bearer ' + config.token } } }));
   t.after(() => client.close());
   const { tools } = await client.listTools();
-  assert.equal(tools.length, 38);
+  assert.equal(tools.length, 44);
   assert.ok(tools.filter(x => x.name !== 'list_profiles').every(x => x.inputSchema.properties.profile), 'every tool takes profile');
   const listed = JSON.parse((await client.callTool({ name: 'list_profiles', arguments: {} })).content[0].text);
   assert.deepEqual(listed.map(p => p.name), ['Main', 'Shop']);

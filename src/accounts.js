@@ -47,16 +47,23 @@ async function checkPassword(password, stored) {
   return equal(key.toString('base64url'), expected);
 }
 
-export function validateProfile(input) {
+// The passcode of an account opened with Google, GitHub and so on. It also locks that account's synced copy.
+export function passcodeProblems(passcode) {
+  const p = String(passcode || '');
+  return p.length < 8 ? ['at least 8 characters'] : p.length > 200 ? ['200 characters or fewer'] : [];
+}
+// contact: false accepts an account with no country or phone (made with Google, GitHub and so on).
+export function validateProfile(input, { contact = true } = {}) {
   const fullName = String(input?.fullName || '').trim().replace(/\s+/g, ' ');
   const country = String(input?.country || '').trim().toUpperCase();
   const phone = String(input?.phone || '').replace(/[\s()-]/g, '');
   const email = lower(input?.email);
   if (fullName.length < 2 || fullName.length > 100 || !/\p{L}/u.test(fullName)) return { error: 'Enter your full name.' };
-  if (!/^[A-Z]{2}$/.test(country)) return { error: 'Choose your country.' };
-  if (!/^\+[1-9]\d{6,14}$/.test(phone)) return { error: 'Enter your phone number with its country code, for example +65 9123 4567.' };
+  const bare = !contact && !country && !phone;
+  if (!bare && !/^[A-Z]{2}$/.test(country)) return { error: 'Choose your country.' };
+  if (!bare && !/^\+[1-9]\d{6,14}$/.test(phone)) return { error: 'Enter your phone number with its country code, for example +65 9123 4567.' };
   if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return { error: 'Enter a valid email address.' };
-  return { profile: { fullName, country, phone, email } };
+  return { profile: bare ? { fullName, email } : { fullName, country, phone, email } };
 }
 
 function cookies(req) {
@@ -142,7 +149,7 @@ export function mountAccounts(app, config, spaces, { cloud } = {}) {
   const findByEmail = email => spaces.all().find(s => ownerOf(s)?.email === email) || null;
   const shared = spaces.default.store; // sign-ups in progress, before the account has a space of its own
   const failures = new Map(); // ip → { count, reset }
-  const pendingSocial = new Map(); // state → { provider, verifier, mode, expires }, and ticket → profile
+  const pendingSocial = new Map(); // state → { provider, verifier, mode, expires }
   const sweep = setInterval(() => {
     const now = Date.now();
     for (const map of [failures, pendingSocial]) for (const [k, v] of map) if ((v.reset || v.expires) < now) map.delete(k);
@@ -162,20 +169,36 @@ export function mountAccounts(app, config, spaces, { cloud } = {}) {
 
   // ----- sessions: one cookie per account, plus one that remembers which account is in front -----
   const cookieAttrs = `Path=/; HttpOnly; SameSite=Lax${secureCookie ? '; Secure' : ''}`;
-  function startSession(res, space) {
+  function startSession(res, space, { locked = false } = {}) {
     const token = secret(), sessions = space.store.kv('account:sessions') || {};
     for (const [k, v] of Object.entries(sessions)) if (v.expires < Date.now()) delete sessions[k];
-    sessions[digest(token)] = { expires: Date.now() + SESSION_TTL };
+    sessions[digest(token)] = { expires: Date.now() + SESSION_TTL, ...(locked ? { locked: true } : {}) };
     space.store.kv('account:sessions', sessions);
     res.append('Set-Cookie', `${cookieName(space)}=${token}; ${cookieAttrs}; Max-Age=${SESSION_TTL / 1000}`);
     res.append('Set-Cookie', `${ACTIVE_COOKIE}=${space.id}; ${cookieAttrs}; Max-Age=${SESSION_TTL / 1000}`);
   }
-  function signedInTo(req, space, jar = cookies(req)) {
+  // A session can be signed in but locked: a provider confirmed who it is, the passcode hasn't been typed yet.
+  // Locked sessions reach nothing except the passcode routes.
+  function sessionOf(req, space, jar = cookies(req)) {
     const token = jar[cookieName(space)];
-    if (!token || !ownerOf(space)) return false;
+    if (!token || !ownerOf(space)) return null;
     const s = (space.store.kv('account:sessions') || {})[digest(token)];
-    return Boolean(s && s.expires > Date.now());
+    return s && s.expires > Date.now() ? s : null;
   }
+  const signedInTo = (req, space, jar = cookies(req)) => { const s = sessionOf(req, space, jar); return Boolean(s && !s.locked); };
+  function lockedSpace(req) {
+    const jar = cookies(req), list = spaces.all().filter(s => sessionOf(req, s, jar)?.locked);
+    return list.find(s => s.id === jar[ACTIVE_COOKIE]) || list[0] || null;
+  }
+  function setLocked(req, res, space, locked) {
+    const token = cookies(req)[cookieName(space)], sessions = space.store.kv('account:sessions') || {}, s = token && sessions[digest(token)];
+    if (!s) return false;
+    if (locked) s.locked = true; else delete s.locked;
+    space.store.kv('account:sessions', sessions);
+    if (!locked) res.append('Set-Cookie', `${ACTIVE_COOKIE}=${space.id}; ${cookieAttrs}; Max-Age=${SESSION_TTL / 1000}`);
+    return true;
+  }
+  const lightRule = o => Boolean(o?.passcode || !o?.phone); // accounts made with a provider use the passcode rule
   const signedSpaces = req => { const jar = cookies(req); return spaces.all().filter(s => signedInTo(req, s, jar)); };
   // The account this browser is working in: the one it last chose, else any it is signed in to.
   function spaceFor(req) {
@@ -233,8 +256,10 @@ export function mountAccounts(app, config, spaces, { cloud } = {}) {
 
   router.get('/status', async (req, res) => {
     const active = spaceFor(req), o = active && ownerOf(active), providers = await enabledProviders();
+    const held = active ? null : lockedSpace(req), ho = held && ownerOf(held);
     res.json({
-      hasAccount: anyOwner(), signedIn: Boolean(active), email: o?.email, name: o?.fullName,
+      ...(ho ? { locked: true, lockedEmail: ho.email, lockedName: ho.fullName, needsPasscode: !ho.passwordHash } : {}),
+      hasAccount: anyOwner(), signedIn: Boolean(active), email: o?.email, name: o?.fullName, hasPassword: Boolean(o?.passwordHash),
       account: active?.id, accounts: signedSpaces(req).map(s => describe(s, active)),
       canAdd: !spaces.full() || !ownerOf(spaces.default), cloud: Boolean(cloud?.available()),
       providers: providers.map(id => ({ id, name: PROVIDERS[id].name })),
@@ -244,20 +269,12 @@ export function mountAccounts(app, config, spaces, { cloud } = {}) {
 
   router.post('/signup', async (req, res) => {
     const denied = maySignUp(req, req.body); if (denied) return res.status(403).json({ error: denied });
-    const social = req.body.ticket ? pendingSocial.get(`ticket:${req.body.ticket}`) : null;
-    if (req.body.ticket && (!social || social.expires < Date.now())) return res.status(400).json({ error: 'Your sign-in expired. Start again.' });
-    const { profile, error } = validateProfile({ ...req.body, email: social ? social.email : req.body.email });
+    const { profile, error } = validateProfile(req.body);
     if (error) return res.status(400).json({ error });
     if (findByEmail(profile.email)) return res.status(409).json({ error: 'An account with that email is already on this computer. Sign in instead.' });
     const problems = passwordProblems(req.body.password, { email: profile.email, name: profile.fullName });
     if (problems.length) return res.status(400).json({ error: `Your password needs ${problems.join(', ')}.` });
     const passwordHash = await hashPassword(req.body.password);
-    if (social) { // the provider already verified this email
-      pendingSocial.delete(`ticket:${req.body.ticket}`);
-      const space = newSpace();
-      space.store.kv('account:owner', { ...profile, passwordHash, providers: { [social.provider]: social.id }, createdAt: Date.now() });
-      startSession(res, space); return res.json({ ok: true, signedIn: true });
-    }
     if (!mailer && !config.demo) return noMail(res);
     const prev = shared.kv('account:pending'), limit = codeLimit(prev);
     if (limit) return res.status(429).json({ error: limit });
@@ -307,7 +324,7 @@ export function mountAccounts(app, config, spaces, { cloud } = {}) {
     if (cloud?.available() && email && !maySignUp(req, req.body)) {
       const found = await cloud.fetchAccount(email, req.body.password).catch(e => { console.error('Account sync:', String(e?.message || e).slice(0, 200)); return null; });
       if (found) {
-        const { profile, error } = validateProfile({ ...found.blob.profile, email });
+        const { profile, error } = validateProfile({ ...found.blob.profile, email }, { contact: false });
         if (!error && !findByEmail(email)) {
           const target = newSpace();
           target.store.kv('account:owner', { ...profile, passwordHash: await hashPassword(req.body.password), providers: {}, createdAt: Date.now(), restoredAt: Date.now() });
@@ -321,8 +338,44 @@ export function mountAccounts(app, config, spaces, { cloud } = {}) {
 
   // Signs out of the account in front (or, with all: true, every account in this browser).
   router.post('/logout', (req, res) => {
-    const active = spaceFor(req);
-    for (const s of req.body?.all ? signedSpaces(req) : active ? [active] : []) endSession(req, res, s);
+    const active = spaceFor(req) || lockedSpace(req);
+    for (const s of req.body?.all ? spaces.all().filter(x => sessionOf(req, x)) : active ? [active] : []) endSession(req, res, s);
+    res.json({ ok: true });
+  });
+
+  // After a provider sign-in: type the passcode to open the account.
+  router.post('/unlock', async (req, res) => {
+    if (throttled(req)) return res.status(429).json({ error: 'Too many attempts. Try again in 15 minutes.' });
+    const space = lockedSpace(req), o = space && ownerOf(space);
+    if (!o) return res.status(401).json({ error: 'Sign in first.' });
+    if (!o.passwordHash) return res.status(400).json({ error: 'Create a passcode first.', needsPasscode: true });
+    if (!(await checkPassword(req.body.passcode, o.passwordHash))) { failed(req); return res.status(401).json({ error: 'That passcode is not right.' }); }
+    setLocked(req, res, space, false); res.json({ ok: true, signedIn: true });
+  });
+  // First provider sign-in on this computer: choose a passcode, or (existing: true) enter the one from
+  // another computer, which brings that account's synced settings here.
+  router.post('/passcode', async (req, res) => {
+    if (throttled(req)) return res.status(429).json({ error: 'Too many attempts. Try again in 15 minutes.' });
+    const space = lockedSpace(req), o = space && ownerOf(space);
+    if (!o) return res.status(401).json({ error: 'Sign in first.' });
+    if (o.passwordHash) return res.status(400).json({ error: 'This account already has a passcode.' });
+    const problems = passcodeProblems(req.body.passcode);
+    if (problems.length) return res.status(400).json({ error: `Your passcode needs ${problems.join(', ')}.` });
+    let kept = {};
+    if (req.body.existing === true) {
+      if (!cloud?.available()) return res.status(400).json({ error: 'This Relay can\'t reach accounts from other computers.' });
+      const found = await cloud.fetchAccount(o.email, req.body.passcode).catch(() => null);
+      if (!found) { failed(req); return res.status(401).json({ error: 'No Relay account from another computer opens with that passcode. Check it, or create a new passcode if this is your first computer.' }); }
+      kept = { ...(validateProfile({ ...found.blob.profile, email: o.email }, { contact: false }).profile || {}), restoredAt: Date.now() };
+      cloud.adopt(space, found);
+    }
+    space.store.kv('account:owner', { ...o, ...kept, passwordHash: await hashPassword(req.body.passcode) });
+    setLocked(req, res, space, false); res.json({ ok: true, signedIn: true, ...(kept.restoredAt ? { restored: true } : {}) });
+  });
+  // Locks this browser's session again (the dashboard does this after 15 idle minutes).
+  router.post('/lock', (req, res) => {
+    const space = spaceFor(req);
+    if (space && ownerOf(space).passwordHash) setLocked(req, res, space, true);
     res.json({ ok: true });
   });
 
@@ -359,8 +412,8 @@ export function mountAccounts(app, config, spaces, { cloud } = {}) {
     if (!o || !record || record.email !== o.email) return res.status(400).json({ error: 'Ask for a new code.' });
     const problem = checkCode(record, req.body.code);
     if (problem) { space.store.kv('account:reset', record); return res.status(400).json({ error: problem }); }
-    const problems = passwordProblems(req.body.password, { email: o.email, name: o.fullName });
-    if (problems.length) return res.status(400).json({ error: `Your password needs ${problems.join(', ')}.` });
+    const problems = lightRule(o) ? passcodeProblems(req.body.password) : passwordProblems(req.body.password, { email: o.email, name: o.fullName });
+    if (problems.length) return res.status(400).json({ error: `Your ${lightRule(o) ? 'passcode' : 'password'} needs ${problems.join(', ')}.` });
     space.store.kv('account:owner', { ...o, passwordHash: await hashPassword(req.body.password) });
     space.store.kv('account:reset', null);
     space.store.kv('account:sessions', {}); // sign out everywhere else
@@ -374,7 +427,9 @@ export function mountAccounts(app, config, spaces, { cloud } = {}) {
     const space = spaceFor(req);
     if (!space) return res.status(401).json({ error: 'Sign in first.' });
     if (throttled(req)) return res.status(429).json({ error: 'Too many attempts. Try again in 15 minutes.' });
-    if (!(await checkPassword(req.body.password, ownerOf(space).passwordHash))) { failed(req); return res.status(401).json({ error: 'Wrong password.' }); }
+    const o = ownerOf(space);
+    // An account made with Google, GitHub and so on has no password: its email confirms instead.
+    if (o.passwordHash ? !(await checkPassword(req.body.password, o.passwordHash)) : lower(req.body.email) !== o.email) { failed(req); return res.status(401).json({ error: o.passwordHash ? 'Wrong password.' : 'Type this account’s email to confirm.' }); }
     if (space.id === 'default') return res.status(400).json({ error: 'The first account on this computer can’t be removed here. Disconnect its WhatsApp instead.' });
     endSession(req, res, space);
     cloud?.forget(space);
@@ -450,26 +505,36 @@ export function mountAccounts(app, config, spaces, { cloud } = {}) {
     if (space) {
       const o = ownerOf(space);
       if (o.providers?.[providerId] !== String(profile.id)) space.store.kv('account:owner', { ...o, providers: { ...o.providers, [providerId]: String(profile.id) } });
-      startSession(res, space); return res.redirect(302, '/');
+      // The provider proved who this is; the passcode opens the chats.
+      startSession(res, space, { locked: true }); return res.redirect(302, '/');
     }
     // No such account here: finish signing up with the name and verified email from the provider.
     const denied = maySignUp(req, {});
     if (denied) { failed(req); return back(res, localBase ? denied : `This ${name} account doesn't have a Relay account on this bridge.`); }
     if (!profile.verified || !profile.email) return back(res, `${name} didn't share a verified email. Sign up with your email instead.`);
-    const ticket = secret();
-    pendingSocial.set(`ticket:${ticket}`, { provider: providerId, id: String(profile.id), email: lower(profile.email), name: profile.name, expires: Date.now() + 15 * 60000 });
-    res.redirect(302, `/?signup=${encodeURIComponent(ticket)}`);
+    // The provider already checked the email, so the account needs nothing else: no phone, no password.
+    const email = lower(profile.email), given = String(profile.name || '').trim().replace(/\s+/g, ' ').slice(0, 100);
+    const local = email.split('@')[0], usable = n => n.length >= 2 && /\p{L}/u.test(n);
+    const { profile: owner, error } = validateProfile({ fullName: usable(given) ? given : usable(local) ? local.slice(0, 100) : 'Relay user', email }, { contact: false });
+    if (error) return back(res, `${name} didn't share a usable name and email. Sign up with your email instead.`);
+    // The account opens once its owner chooses a passcode (or enters the one from another computer).
+    const created = newSpace();
+    created.store.kv('account:owner', { ...owner, passcode: true, providers: { [providerId]: String(profile.id) }, createdAt: Date.now() });
+    startSession(res, created, { locked: true }); res.redirect(302, '/');
   }
-
-  router.get('/ticket/:ticket', (req, res) => {
-    const t = pendingSocial.get(`ticket:${req.params.ticket}`);
-    if (!t || t.expires < Date.now()) return res.status(404).json({ error: 'Your sign-in expired. Start again.' });
-    res.json({ email: t.email, name: t.name || '', provider: PROVIDERS[t.provider].name });
-  });
 
   app.use('/auth', (req, res, next) => { res.set('Cache-Control', 'no-store'); next(); }, router);
   return {
     spaceFor, sessionValid: req => Boolean(spaceFor(req)), hasAccount: anyOwner, ownerOf,
     checkPassword: (space, password) => checkPassword(password, ownerOf(space)?.passwordHash),
+    hasPassword: space => Boolean(ownerOf(space)?.passwordHash),
+    // Gives a password to an account made with a sign-in provider. Returns what is wrong with it, if anything.
+    setFirstPassword: async (space, password, { check = false } = {}) => {
+      const o = ownerOf(space); if (!o || o.passwordHash) return 'This account already has a password.';
+      const problems = passwordProblems(password, { email: o.email, name: o.fullName });
+      if (problems.length) return `Your password needs ${problems.join(', ')}.`;
+      if (!check) space.store.kv('account:owner', { ...o, passwordHash: await hashPassword(password) });
+      return null;
+    },
   };
 }

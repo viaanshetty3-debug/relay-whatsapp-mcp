@@ -33,9 +33,18 @@ test('dashboard logs in, renders chats, sends and edits, saves drafts, schedules
   const submit=new w.Event('submit',{bubbles:true,cancelable:true});$('#composer').dispatchEvent(submit);assert.equal(submit.defaultPrevented,true);
   await until(()=>$('#messages').textContent.includes('Sent from the dashboard'),'Send failed');
   const message=[...d.querySelectorAll('.message')].find(m=>m.textContent.includes('Sent from the dashboard'));
-  message.querySelector('[data-action="edit"]').click();await until(()=>$('#send').textContent.includes('Save edit'),'Edit selection failed');
+  message.querySelector('[data-action="menu"]').click();await until(()=>!$('#msg-menu').hidden,'Menu did not open');
+  const menuItems=[...$('#msg-menu').querySelectorAll('[data-menu]')].map(b=>b.dataset.menu);
+  for(const a of ['reply','react','star','pin','forward','copy','info','edit','delete','delete-for-me','select'])assert.ok(menuItems.includes(a),'menu is missing '+a);
+  $('#msg-menu [data-menu="edit"]').click();await until(()=>$('#send').textContent.includes('Save edit'),'Edit selection failed');
   $('#message-input').value='Edited from the dashboard';$('#composer').dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));
   await until(()=>$('#messages').textContent.includes('Edited from the dashboard'),'Edit failed');
+  {const edited=[...d.querySelectorAll('.message')].find(m=>m.textContent.includes('Edited from the dashboard'));
+  edited.querySelector('[data-action="menu"]').click();await until(()=>!$('#msg-menu').hidden);$('#msg-menu [data-menu="star"]').click();
+  await until(()=>$('#messages').textContent.includes('★ starred'),'Star failed');
+  [...d.querySelectorAll('.message')].find(m=>m.textContent.includes('Edited from the dashboard')).querySelector('[data-action="menu"]').click();await until(()=>!$('#msg-menu').hidden);$('#msg-menu [data-menu="select"]').click();
+  await until(()=>!$('#select-bar').hidden&&$('#select-bar').textContent.includes('1 selected'),'Select mode failed');
+  $('#select-bar [data-bulk="cancel"]').click();await until(()=>$('#select-bar').hidden,'Cancel select failed');}
   $('#message-input').value='My draft';click('#save-draft');await until(()=>store.drafts().length===1,'Draft save failed');
   click('[data-view="drafts"]');await until(()=>$('#draft-list').textContent.includes('My draft'),'Draft page failed');
   click('[data-open-draft]');await until(()=>$('#message-input').value==='My draft'&&!$('#view-inbox').hidden,'Draft continuation failed');
@@ -44,7 +53,7 @@ test('dashboard logs in, renders chats, sends and edits, saves drafts, schedules
   click('[data-cancel]');await until(()=>store.jobs()[0].status==='cancelled','Cancel failed');
   click('[data-view="inbox"]');w.prompt=()=>'Edited from the dashboard';click('#global-search');await until(()=>!$('#search-results').hidden&&$('#search-results').textContent.includes('Edited from the dashboard'),'Search failed');
   click('[data-view="connections"]');assert.match($('#claude-config').textContent,/[\\/]+bin[\\/]+relay-whatsapp-mcp\.mjs/);assert.ok($('#mcp-url').textContent.endsWith('/mcp'));
-  click('[data-view="tools"]');assert.equal(d.querySelectorAll('.tool-card').length,38);click('#run-tool');await until(()=>$('#tool-result').textContent.includes('connected'),'Tool runner failed');
+  click('[data-view="tools"]');assert.equal(d.querySelectorAll('.tool-card').length,44);click('#run-tool');await until(()=>$('#tool-result').textContent.includes('connected'),'Tool runner failed');
   assert.deepEqual(errors,[]);
   click('#logout');assert.equal($('#workspace').hidden,true);assert.equal(w.sessionStorage.getItem('relay-token'),null);
 });

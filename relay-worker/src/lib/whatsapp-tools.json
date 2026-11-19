@@ -525,6 +525,195 @@
     }
   },
   {
+    "name": "star_message",
+    "description": "Star or unstar a message so it is easy to find again. Saved in Relay and, when WhatsApp is linked, on your phone.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "chat": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 150,
+          "description": "Exact WhatsApp chat JID from list_chats, or a phone number with country code"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "starred": {
+          "default": true,
+          "type": "boolean"
+        },
+        "profile": {
+          "description": "Which linked WhatsApp to use: a profile id or name from list_profiles. Leave out for the main profile.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        }
+      },
+      "required": [
+        "chat",
+        "id"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "pin_message",
+    "description": "Pin a message to the top of its chat for 24 hours, 7 days or 30 days, or unpin it.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "chat": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 150,
+          "description": "Exact WhatsApp chat JID from list_chats, or a phone number with country code"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "pinned": {
+          "default": true,
+          "type": "boolean"
+        },
+        "days": {
+          "default": 7,
+          "anyOf": [
+            {
+              "type": "number",
+              "const": 1
+            },
+            {
+              "type": "number",
+              "const": 7
+            },
+            {
+              "type": "number",
+              "const": 30
+            }
+          ]
+        },
+        "profile": {
+          "description": "Which linked WhatsApp to use: a profile id or name from list_profiles. Leave out for the main profile.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        }
+      },
+      "required": [
+        "chat",
+        "id"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "delete_message_for_me",
+    "description": "Remove a message from this chat for you only (the other people still see it). Works on any message.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "chat": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 150,
+          "description": "Exact WhatsApp chat JID from list_chats, or a phone number with country code"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "profile": {
+          "description": "Which linked WhatsApp to use: a profile id or name from list_profiles. Leave out for the main profile.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        }
+      },
+      "required": [
+        "chat",
+        "id"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "message_info",
+    "description": "Delivery details for one message: when it was sent and, for your own messages, who it was delivered to and who read it (as far as WhatsApp reported while Relay was running).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "chat": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 150,
+          "description": "Exact WhatsApp chat JID from list_chats, or a phone number with country code"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "profile": {
+          "description": "Which linked WhatsApp to use: a profile id or name from list_profiles. Leave out for the main profile.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        }
+      },
+      "required": [
+        "chat",
+        "id"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
     "name": "send_media",
     "description": "Remote transport: use chunked uploads for large attachments. Send an image, video, audio or document up to 500 MB. For larger attachments, use create_media_upload and upload_media_chunk, then pass fileId. Small payloads may use base64 directly (8 MB inline transport budget). Never supply a filesystem path or URL.",
     "inputSchema": {
@@ -1176,6 +1365,109 @@
         "chat",
         "name",
         "options"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "send_event",
+    "description": "Send a WhatsApp event invitation (name, optional description, start and optional end time) to a chat.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "chat": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 150,
+          "description": "Exact WhatsApp chat JID from list_chats, or a phone number with country code"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "startTime": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 40,
+          "description": "Start date and time, ISO 8601, for example 2026-12-01T18:30:00+08:00"
+        },
+        "endTime": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 40
+        },
+        "profile": {
+          "description": "Which linked WhatsApp to use: a profile id or name from list_profiles. Leave out for the main profile.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        }
+      },
+      "required": [
+        "chat",
+        "name",
+        "startTime"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "send_contact",
+    "description": "Send a contact card (name and phone number) to a chat.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "chat": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 150,
+          "description": "Exact WhatsApp chat JID from list_chats, or a phone number with country code"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "phone": {
+          "type": "string",
+          "pattern": "^\\+?[0-9 ()-]{7,20}$"
+        },
+        "profile": {
+          "description": "Which linked WhatsApp to use: a profile id or name from list_profiles. Leave out for the main profile.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        }
+      },
+      "required": [
+        "chat",
+        "name",
+        "phone"
       ],
       "$schema": "http://json-schema.org/draft-07/schema#",
       "additionalProperties": false

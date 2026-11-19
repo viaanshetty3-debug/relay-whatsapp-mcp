@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Sign in or create an account from the same page.** The sign-in page now has **Sign in** and **Create account** tabs, on a brand-new computer too, so an account made elsewhere can be opened straight away.
+- **WhatsApp's message menu in the dashboard.** Every message has a ⋯ menu: Reply, Reply privately (groups), React, Star, Pin (1, 7 or 30 days), Forward, Copy, Edit (your own), Message <person> (groups), Delete for everyone (your own), Info (when it was sent, delivered and read), Delete for me, and Select messages (copy, forward, star or delete several at once). Starred and pinned messages are marked in the chat.
+- **The ＋ attach menu**: File, Photos and videos, Poll, Event and Contact. Polls, events and contact cards are sent from small forms.
+- Three new tools for Claude and ChatGPT: `star_message`, `pin_message`, `delete_message_for_me`, `message_info`, `send_event`, `send_contact` (44 tools).
+
+### Changed
+- **Google, GitHub (and Microsoft, Facebook when set up) need no form.** Signing up with a provider creates the account from the provider's name and verified email: no country, phone number, password rules or emailed code. You choose a **passcode** (at least 8 characters) once; after that the provider button plus the passcode opens your chats. The email sign-up form is unchanged.
+- **The dashboard locks after 15 minutes without use** and asks for your password or passcode again.
+- **A provider account can move between computers.** Turn on account sync with the passcode; on another computer, use the provider button, tick **I already use this account on another computer** and enter the passcode. The Relay Accounts service still can't read the synced copy.
+- A request the server refuses no longer signs the browser out of the account; it shows the sign-in or passcode page instead.
+
 ## 1.2.0 — 2026-11-15
 
 ### Added

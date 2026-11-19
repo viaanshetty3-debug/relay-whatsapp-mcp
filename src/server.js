@@ -48,7 +48,7 @@ export function createApp(source,config) {
   const auth=mountOAuth(app,config,spaces,accounts);
   const owner=(q,r,next)=>auth(q,r,()=>q.owner?next():r.status(403).json({error:'Owner token required'}));
   app.use('/api',owner,express.json({limit:'24mb'}));
-  app.get('/api/state',(q,r)=>{const b=pick(q),s=q.space;r.json({ ...b.wa.status(),qr:b.wa.qr,cursor:b.store.cursor(),profiles:s.profiles.list(),account:{id:s.id,email:accounts.ownerOf(s)?.email,first:s.id==='default'},setup:cloud.setup(s),readOnly:config.readOnly,base:config.base,remote:s.id==='default'?remoteSummary():null,localConfig:{mcpServers:{[serverName(s)]:localEntry(s)}},localApps:!config.production,tools:s.router.definitions.map(t=>({name:t.name,description:t.description,write:t.write})),allowedChats:[...config.allowed]});});
+  app.get('/api/state',(q,r)=>{const b=pick(q),s=q.space;r.json({ ...b.wa.status(),qr:b.wa.qr,cursor:b.store.cursor(),profiles:s.profiles.list(),account:{id:s.id,email:accounts.ownerOf(s)?.email,first:s.id==='default',hasPassword:accounts.hasPassword(s)},setup:cloud.setup(s),readOnly:config.readOnly,base:config.base,remote:s.id==='default'?remoteSummary():null,localConfig:{mcpServers:{[serverName(s)]:localEntry(s)}},localApps:!config.production,tools:s.router.definitions.map(t=>({name:t.name,description:t.description,write:t.write})),allowedChats:[...config.allowed]});});
   app.get('/api/profiles',(q,r)=>r.json(q.space.profiles.list()));
   app.post('/api/profiles',(q,r)=>r.status(201).json(q.space.profiles.create(q.body?.name)));
   app.post('/api/profiles/:id/rename',(q,r)=>r.json(q.space.profiles.rename(q.params.id,q.body?.name)));
@@ -56,8 +56,13 @@ export function createApp(source,config) {
   // ----- an account that follows its owner to other computers (cloud.js) -----
   app.get('/api/sync',(q,r)=>r.json(cloud.status(q.space)));
   app.post('/api/sync/start',async(q,r)=>{
-    if(!(await accounts.checkPassword(q.space,q.body?.password)))return r.status(401).json({error:'Wrong password.'});
-    r.json(await cloud.start(q.space,accounts.ownerOf(q.space),q.body.password));
+    // An account made with Google, GitHub and so on has no password yet: the one chosen here becomes it.
+    const first=!accounts.hasPassword(q.space);
+    if(first){const problem=await accounts.setFirstPassword(q.space,q.body?.password,{check:true});if(problem)return r.status(400).json({error:problem});}
+    else if(!(await accounts.checkPassword(q.space,q.body?.password)))return r.status(401).json({error:'Wrong password.'});
+    const started=await cloud.start(q.space,accounts.ownerOf(q.space),q.body.password);
+    if(first)await accounts.setFirstPassword(q.space,q.body.password);
+    r.json(started);
   });
   app.post('/api/sync/confirm',async(q,r)=>r.json(await cloud.confirm(q.space,q.body?.code,accounts.ownerOf(q.space),{replace:q.body?.replace===true})));
   app.post('/api/sync/now',async(q,r)=>r.json(await cloud.sync(q.space)));

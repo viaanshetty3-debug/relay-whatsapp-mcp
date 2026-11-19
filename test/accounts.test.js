@@ -30,7 +30,10 @@ async function start(t, extra = {}) {
     const c = jar[host]; if (cookie && c) h.Cookie = c;
     const res = await fetch(`http://${host}:${port}${path}`, { method: method || (body !== undefined ? 'POST' : 'GET'), headers: h, body: rawBody ?? (body !== undefined ? JSON.stringify(body) : undefined), redirect: 'manual' });
     const set = res.headers.get('set-cookie');
-    if (set) { const v = set.split(';')[0]; jar[host] = v.endsWith('=') ? '' : v; }
+    // Like a browser: keep every cookie by name, and drop the ones the server clears.
+    const kept = new Map((jar[host] || '').split('; ').filter(Boolean).map(c => [c.slice(0, c.indexOf('=')), c]));
+    for (const c of res.headers.getSetCookie()) { const v = c.split(';')[0], k = v.slice(0, v.indexOf('=')); if (v.endsWith('=')) kept.delete(k); else kept.set(k, v); }
+    jar[host] = [...kept.values()].join('; ');
     const text = await res.text(); let json; try { json = JSON.parse(text); } catch { json = null; }
     return { status: res.status, json, text, location: res.headers.get('location'), setCookie: set };
   };
@@ -48,6 +51,10 @@ test('password and profile rules', () => {
   assert.match(validateProfile({ ...PROFILE, phone: '91234567' }).error, /country code/);
   assert.match(validateProfile({ ...PROFILE, country: '' }).error, /country/);
   assert.match(validateProfile({ ...PROFILE, email: 'nope' }).error, /email/);
+  // An account made with a sign-in provider has no country or phone; the email form still needs them.
+  assert.deepEqual(validateProfile({ fullName: 'Ada Lovelace', email: 'Ada@Example.com' }, { contact: false }).profile, { fullName: 'Ada Lovelace', email: 'ada@example.com' });
+  assert.match(validateProfile({ fullName: 'Ada Lovelace', email: 'ada@example.com' }).error, /country/);
+  assert.match(validateProfile({ ...PROFILE, phone: '123' }, { contact: false }).error, /country code/);
 });
 
 test('sign up with an emailed 6-digit code, then sign in, reset the password and sign out', async t => {
@@ -134,7 +141,7 @@ test('a hosted bridge needs the owner token to create the first account', async 
   assert.equal((await call('/auth/signup', { body: { ...PROFILE, setupToken: 'test'.repeat(16) } })).status, 200);
 });
 
-test('sign in with GitHub: first time finishes sign-up, later it signs straight in, other GitHub accounts never open it', async t => {
+test('sign in with GitHub: the first time creates the account with nothing else to fill in, later it signs straight in, other GitHub accounts never open it', async t => {
   let user = { id: 42, login: 'ada', name: 'Ada Lovelace' }, emails = [{ email: 'ada@example.com', primary: true, verified: true }];
   const seen = [];
   const fakeFetch = async (url, init = {}) => {
@@ -158,29 +165,57 @@ test('sign in with GitHub: first time finishes sign-up, later it signs straight 
     return call(`/auth/callback/github?code=abc&state=${to.searchParams.get('state')}`, { host: 'localhost' });
   }
 
+  const PASSCODE = 'river-stone-42', L = { host: 'localhost' };
   let r = await signInWithGitHub();
-  const ticket = new URL(r.location, 'http://x').searchParams.get('signup');
-  assert.ok(ticket, 'new users finish signing up');
+  assert.equal(r.location, '/', 'no extra form: GitHub verified the email'); assert.match(r.setCookie, /relay_session=/);
   assert.match(seen.find(s => s.url.includes('access_token')).body, /client_secret=gh-secret/);
-  r = await call('/auth/ticket/' + ticket, { host: 'localhost' });
-  assert.deepEqual(r.json, { email: 'ada@example.com', name: 'Ada Lovelace', provider: 'GitHub' });
-  r = await call('/auth/signup', { host: 'localhost', body: { ...PROFILE, email: 'attacker@example.com', ticket } });
-  assert.equal(r.status, 200); assert.equal(r.json.signedIn, true, 'no email code: GitHub verified it');
-  assert.equal(store.kv('account:owner').email, 'ada@example.com', 'the provider email wins over the form');
-  assert.equal(store.kv('account:owner').providers.github, '42');
+  let owner = store.kv('account:owner');
+  assert.equal(owner.email, 'ada@example.com'); assert.equal(owner.fullName, 'Ada Lovelace'); assert.equal(owner.providers.github, '42');
+  assert.equal(owner.passwordHash, undefined); assert.equal(owner.phone, undefined);
+  assert.equal((await call('/auth/ticket/x', L)).status, 404, 'the old finish-signing-up step is gone');
 
-  await call('/auth/logout', { host: 'localhost', body: {} });
+  // GitHub proved who this is, but nothing opens until a passcode is chosen.
+  let status = (await call('/auth/status', L)).json;
+  assert.equal(status.signedIn, false); assert.equal(status.locked, true); assert.equal(status.needsPasscode, true); assert.equal(status.lockedEmail, 'ada@example.com');
+  assert.equal((await call('/api/state', L)).status, 401, 'a locked session reaches no chats');
+  assert.equal((await call('/auth/unlock', { ...L, body: { passcode: PASSCODE } })).status, 400);
+  assert.match((await call('/auth/passcode', { ...L, body: { passcode: 'short' } })).json.error, /at least 8 characters/);
+  assert.equal((await call('/auth/passcode', { ...L, body: { passcode: PASSCODE } })).json.signedIn, true);
+  assert.match(store.kv('account:owner').passwordHash, /^scrypt\$/, 'only a salted hash is kept');
+  assert.equal((await call('/api/state', L)).status, 200);
+  assert.equal((await call('/auth/passcode', { ...L, body: { passcode: 'another-one-99' } })).status, 401, 'it can\'t be replaced this way');
+
+  // The dashboard locks itself after 15 idle minutes; the passcode opens it again.
+  await call('/auth/lock', { ...L, body: {} });
+  assert.equal((await call('/api/state', L)).status, 401);
+  assert.equal((await call('/auth/unlock', { ...L, body: { passcode: 'wrong-passcode' } })).status, 401);
+  assert.equal((await call('/auth/unlock', { ...L, body: { passcode: PASSCODE } })).json.signedIn, true);
+  assert.equal((await call('/api/state', L)).status, 200);
+
+  // Every later GitHub sign-in asks for the passcode before anything opens.
+  await call('/auth/logout', { ...L, body: {} });
   r = await signInWithGitHub();
   assert.equal(r.location, '/'); assert.match(r.setCookie, /relay_session=/);
-  assert.equal((await call('/api/state', { host: 'localhost' })).status, 200);
+  status = (await call('/auth/status', L)).json;
+  assert.equal(status.locked, true); assert.equal(status.needsPasscode, false);
+  assert.equal((await call('/api/state', L)).status, 401);
+  assert.equal((await call('/auth/unlock', { ...L, body: { passcode: PASSCODE } })).status, 200);
+  assert.equal((await call('/api/state', L)).status, 200);
 
   user = { id: 99, login: 'eve' }; emails = [{ email: 'eve@example.com', primary: true, verified: true }];
-  await call('/auth/logout', { host: 'localhost', body: {} });
+  await call('/auth/logout', { ...L, body: { all: true } });
   r = await signInWithGitHub();
-  // Someone else's GitHub never opens Ada's account: it can only start an account of its own.
-  assert.match(r.location, /^\/\?signup=/);
-  assert.equal(r.setCookie, null);
-  assert.equal((await call('/api/state', { host: 'localhost' })).status, 401);
+  // Someone else's GitHub never opens Ada's account: on a local bridge it gets an empty account of its own.
+  assert.equal(r.location, '/');
+  status = (await call('/auth/status', L)).json;
+  assert.equal(status.lockedEmail, 'eve@example.com'); assert.equal(status.needsPasscode, true);
+  assert.equal((await call('/auth/unlock', { ...L, body: { passcode: PASSCODE } })).status, 400, 'Ada\'s passcode opens nothing for Eve');
+  await call('/auth/passcode', { ...L, body: { passcode: 'eve-own-code-7' } });
+  const eve = (await call('/auth/status', L)).json;
+  assert.equal(eve.email, 'eve@example.com'); assert.equal(eve.name, 'eve'); assert.notEqual(eve.account, 'default');
+  assert.equal(store.kv('account:owner').email, 'ada@example.com', 'Ada\'s account is untouched');
+  assert.equal((await call('/auth/remove-account', { ...L, body: { password: 'anything' } })).status, 401);
+  assert.equal((await call('/auth/remove-account', { ...L, body: { password: 'eve-own-code-7' } })).json.removed, true);
 
   r = await call('/auth/callback/github?code=abc&state=forged', { host: 'localhost' });
   assert.match(decodeURIComponent(r.location), /expired/);
@@ -219,7 +254,10 @@ test('dashboard: create account, verify the demo code, open the workspace, sign 
   let cookie = '';
   w.fetch = async (url, opts = {}) => {
     const res = await fetch(base + url, { ...opts, headers: { ...(opts.headers || {}), ...(cookie ? { Cookie: cookie } : {}) } });
-    const set = res.headers.get('set-cookie'); if (set) { const v = set.split(';')[0]; cookie = v.endsWith('=') ? '' : v; }
+    // Like a browser: keep every cookie by name, and drop the ones the server clears.
+    const kept = new Map(cookie.split('; ').filter(Boolean).map(c => [c.slice(0, c.indexOf('=')), c]));
+    for (const c of res.headers.getSetCookie()) { const v = c.split(';')[0], k = v.slice(0, v.indexOf('=')); if (v.endsWith('=')) kept.delete(k); else kept.set(k, v); }
+    cookie = [...kept.values()].join('; ');
     return res;
   };
   w.TextDecoder = TextDecoder; w.AbortController = AbortController; w.confirm = () => true;
@@ -233,6 +271,13 @@ test('dashboard: create account, verify the demo code, open the workspace, sign 
   const submit = s => $(s).dispatchEvent(new w.Event('submit', { bubbles: true, cancelable: true }));
 
   await until(() => !$('#auth-signup').hidden, 'sign-up form not shown for a new bridge');
+  // A new computer offers both: create an account, or sign in to one made elsewhere.
+  assert.equal($('#auth-tabs').hidden, false);
+  assert.deepEqual([...d.querySelectorAll('#auth-tabs [data-tab]')].filter(b => !b.hidden).map(b => b.textContent), ['Sign in', 'Create account']);
+  d.querySelector('#auth-tabs [data-tab="signin"]').click();
+  assert.equal($('#auth-signin').hidden, false); assert.equal($('#auth-signup').hidden, true); assert.ok($('#signin-email'));
+  d.querySelector('#auth-tabs [data-tab="signup"]').click();
+  assert.equal($('#auth-signup').hidden, false);
   assert.ok($('#signup-country').options.length > 150, 'country list filled');
   $('#signup-name').value = PROFILE.fullName; $('#signup-country').value = 'SG';
   $('#signup-country').dispatchEvent(new w.Event('change'));
@@ -257,6 +302,16 @@ test('dashboard: create account, verify the demo code, open the workspace, sign 
   await until(() => /Wrong email or password/.test($('#login-error').textContent), 'wrong password not reported');
   $('#signin-password').value = GOOD; submit('#signin-form');
   await until(() => !$('#workspace').hidden, 'sign in failed');
+  // Left alone, the page locks itself; the password (or passcode) opens it again without signing in afresh.
+  w.RELAY_IDLE_MS = 60; d.dispatchEvent(new w.Event('keydown', { bubbles: true }));
+  await until(() => !$('#auth-unlock').hidden && $('#workspace').hidden, 'the idle page did not lock');
+  w.RELAY_IDLE_MS = 0;
+  assert.equal((await w.fetch('/api/state')).status, 401, 'locked on the server too');
+  assert.equal($('#unlock-title').textContent, 'Enter your passcode'); assert.equal($('#unlock-confirm-label').hidden, true);
+  $('#unlock-passcode').value = 'Wrong-Password-1'; submit('#unlock-form');
+  await until(() => /not right/.test($('#login-error').textContent), 'wrong passcode not reported');
+  $('#unlock-passcode').value = GOOD; submit('#unlock-form');
+  await until(() => !$('#workspace').hidden, 'unlock failed');
   assert.deepEqual(errors, []);
   $('#logout').click(); await sleep(50);
 });
@@ -302,21 +357,23 @@ test('sign in through the Relay Accounts service: only a correctly signed, match
   assert.match(decodeURIComponent((await finish(assertion(good({ nonce: 'never-issued-nonce-xxxxxxxx', aud: req.aud })))).location), /expired/);
   void payload;
 
-  // A good one starts sign-up with the verified Google email; it can't be used twice.
+  // A good one creates the account from the verified Google email, with no form and no code; it can't be used twice.
   let r = await finish(signed);
-  const ticket = new URL(r.location, 'http://x').searchParams.get('signup');
-  assert.ok(ticket);
+  assert.equal(r.location, '/'); assert.match(r.setCookie, /relay_session=/);
   assert.match(decodeURIComponent((await finish(signed)).location), /expired/, 'no replay');
-  r = await call('/auth/signup', { body: { ...PROFILE, ticket } });
-  assert.equal(r.json.signedIn, true);
   assert.equal(store.kv('account:owner').providers.google, 'g-1');
   assert.equal(mails.length, 0, 'no code needed: Google verified the email');
+  assert.equal((await call('/api/state')).status, 401, 'it opens once a passcode is chosen');
+  assert.equal((await call('/auth/passcode', { body: { passcode: 'river-stone-42' } })).status, 200);
+  assert.equal((await call('/api/state')).status, 200);
 
-  // Later sign-ins go straight in; codes for a password reset go through the service.
+  // Later sign-ins ask for the passcode; codes for a reset go through the service.
   await call('/auth/logout', { body: {} });
   req = await begin();
   r = await finish(assertion(good(req)));
-  assert.equal(r.location, '/'); assert.equal((await call('/api/state')).status, 200);
+  assert.equal(r.location, '/'); assert.equal((await call('/api/state')).status, 401);
+  assert.equal((await call('/auth/unlock', { body: { passcode: 'river-stone-42' } })).status, 200);
+  assert.equal((await call('/api/state')).status, 200);
   await call('/auth/reset/request', { body: { email: 'ada@example.com' } });
   assert.equal(mails.length, 1); assert.equal(mails[0].to, 'ada@example.com'); assert.equal(mails[0].purpose, 'reset'); assert.match(mails[0].code, /^\d{6}$/);
   assert.equal(Object.keys(mails[0]).sort().join(), 'code,purpose,to', 'only the address, code and purpose leave the bridge');

@@ -142,7 +142,7 @@ export class WhatsApp extends EventEmitter {
       });
       for(const type of ['messages.reaction','message-receipt.update','presence.update','groups.update','group-participants.update'])on(type,value=>{
         const items=Array.isArray(value)?value:[value];
-        for(const item of items){const chat=this.canonical(item.key?.remoteJid || item.id);if(chat && this.permitted(chat))this.store.event(type,chat,item);}
+        for(const item of items){const chat=this.canonical(item.key?.remoteJid || item.id);if(chat && this.permitted(chat)){this.store.event(type,chat,item);if(type==='message-receipt.update')this.noteReceipt(chat,item);}}
       });
       on('chats.delete',ids=>{for(const id of ids)if(this.permitted(id)){this.store.deleteChat(id);this.store.event('chat.delete',id,{id});}});
       return this.status();
@@ -288,6 +288,14 @@ export class WhatsApp extends EventEmitter {
     }
   }
   connected() { if(this.state!=='connected' || !this.sock)throw new Error('WhatsApp is not connected. Pair it in the dashboard first.');return this.sock; }
+  // Remembers who got and who read one of your messages, for "Info" in the dashboard.
+  noteReceipt(chat,item){
+    const id=item.key?.id,r=item.receipt,who=r?.userJid&&this.canonical(r.userJid);if(!id||!who)return;
+    const m=this.store.getMessage(chat,id);if(!m||!m.fromMe)return;
+    const sec=v=>{const n=Number(v?.toNumber?.()??v);return n>0?n:undefined;};
+    const old=m.receipts?.[who]||{};
+    this.store.message({...m,receipts:{...(m.receipts||{}),[who]:{...old,delivered:sec(r.receiptTimestamp)??old.delivered,read:sec(r.readTimestamp)??old.read,played:sec(r.playedTimestamp)??old.played}}});
+  }
   async pair(phone) {
     if(!/^\d{7,15}$/.test(phone))throw new Error('Use 7–15 digits including country code, without +');
     if(!this.sock || this.state!=='pairing')throw new Error('Connect first, then wait until the QR code appears before requesting a phone code');

@@ -14,7 +14,7 @@ import { Spaces, MAX_ACCOUNTS } from '../src/spaces.js';
 import { createApp } from '../src/server.js';
 import { localServerEntry } from '../src/clients.js';
 import { deriveKeys, sealBlob, openBlob } from '../src/cloud.js';
-import worker, { AccountsStore, resetKeys } from '../accounts-worker/src/index.js';
+import worker, { AccountsStore, resetKeys, signAssertion } from '../accounts-worker/src/index.js';
 
 const PASS = 'Tropical-Mango!2026', PASS2 = 'Quiet-Harbor#7781x';
 const ADA = { fullName: 'Ada Lovelace', country: 'SG', phone: '+65 9123 4567', email: 'ada@example.com', password: PASS };
@@ -23,7 +23,8 @@ const SERVICE = 'https://accounts.test';
 
 // The Relay Accounts service, run in this process. `inbox` collects the codes it emails.
 function service() {
-  const { privateKey } = generateKeyPairSync('ed25519'), objects = new Map(), data = new Map(), inbox = [];
+  const { privateKey, publicKey } = generateKeyPairSync('ed25519'), objects = new Map(), data = new Map(), inbox = [];
+  const pub = publicKey.export({ type: 'spki', format: 'der' }).toString('base64url');
   const STORE = { idFromName: n => n, get: name => {
     if (!objects.has(name)) {
       const d = new Map(); data.set(name, d);
@@ -44,7 +45,7 @@ function service() {
     if (down) throw new TypeError('fetch failed');
     return worker.fetch(new Request(url, { ...init, headers: { ...(init.headers || {}), 'CF-Connecting-IP': '203.0.113.9' }, signal: undefined }), env, {}, google);
   };
-  return { fetchImpl, inbox, data, ready: STORE.get('vault').fetch('https://store/gmail', { method: 'PUT', body: JSON.stringify({ refresh_token: 'r' }) }), setDown: v => { down = v; } };
+  return { fetchImpl, inbox, data, pub, sign: claims => signAssertion(env, claims), ready: STORE.get('vault').fetch('https://store/gmail', { method: 'PUT', body: JSON.stringify({ refresh_token: 'r' }) }), setDown: v => { down = v; } };
 }
 
 // One computer running Relay. Real folders, pretend WhatsApp (no vault, no network).
@@ -54,7 +55,7 @@ async function laptop(t, { dir = mkdtempSync(join(tmpdir(), 'relay-acct-')), svc
   const port = server.address().port;
   const open = cfg => { const store = new Store(resolve(cfg.dir, 'bridge.sqlite')); return new Bridge(store, new DemoWhatsApp(store, cfg), cfg); };
   const config = { dir, port, base: 'http://127.0.0.1:' + port, token: 'root'.repeat(16), allowed: new Set(), demo: false, readOnly: false,
-    mailer: { send: async m => { sent.push(m); } }, accountsUrl: svc ? SERVICE : null, fetch: svc?.fetchImpl || (async () => { throw new TypeError('fetch failed'); }),
+    mailer: { send: async m => { sent.push(m); } }, accountsUrl: svc ? SERVICE : null, accountsPublicKey: svc?.pub, fetch: svc?.fetchImpl || (async () => { throw new TypeError('fetch failed'); }),
     claudeDesktopPath: join(dir, 'claude_desktop_config.json'), ...extra };
   const main = open(config), spaces = new Spaces(config, new Profiles(config, main, { open }), { open, openProfile: open });
   server.on('request', createApp(spaces, config));
@@ -289,4 +290,76 @@ test('account sync stays off in practice mode and when the service is switched o
     assert.equal((await call('/api/sync/start', { body: { password: PASS } })).status, 400);
     assert.equal(svc.inbox.length, 0);
   }
+});
+
+test('an account made with Google or GitHub has no password: turning on sync chooses one, and it then follows its owner too', async t => {
+  const svc = service(); await svc.ready;
+  const A = await laptop(t, { svc }), a = A.browser();
+  await A.signUp(a, ADA);
+  // The same shape a provider sign-in stores: name, email and the provider's id. No password, country or phone.
+  const store = A.spaces.default.store;
+  store.kv('account:owner', { fullName: 'Ada Lovelace', email: ADA.email, providers: { google: 'g-1' }, createdAt: Date.now() });
+  assert.equal((await a('/api/state')).json.account.hasPassword, false);
+  assert.equal((await a('/auth/status')).json.hasPassword, false);
+
+  // A weak choice is refused and nothing is stored; a good one becomes the account's password once sync starts.
+  let r = await a('/api/sync/start', { body: { password: 'short' } });
+  assert.equal(r.status, 400); assert.match(r.json.error, /at least 12 characters/);
+  assert.equal(store.kv('account:owner').passwordHash, undefined);
+  r = await a('/api/sync/start', { body: { password: PASS } });
+  assert.equal(r.status, 200, r.text); assert.equal(r.json.waitingForCode, true);
+  assert.match(store.kv('account:owner').passwordHash, /^scrypt\$/);
+  assert.equal((await a('/api/sync/confirm', { body: { code: svc.inbox.at(-1).code } })).json.on, true);
+  assert.equal((await a('/api/state')).json.account.hasPassword, true);
+
+  // Another computer: email and that password bring the account over, though it has no country or phone.
+  const B = await laptop(t, { svc }), b = B.browser();
+  r = await b('/auth/login', { body: { email: ADA.email, password: PASS } });
+  assert.equal(r.status, 200, r.text); assert.equal(r.json.restored, true);
+  const onB = B.spaces.all().map(s => s.store.kv('account:owner')).find(Boolean);
+  assert.equal(onB.fullName, 'Ada Lovelace'); assert.equal(onB.phone, undefined);
+});
+
+test('a Google account with a passcode: sync is locked with the passcode, and Google plus the passcode bring it to another computer', async t => {
+  const svc = service(); await svc.ready;
+  // What the service does after Google confirms someone: sign an assertion for the bridge that asked.
+  const google = async (call, who) => {
+    const to = new URL((await call('/auth/oauth/google')).location);
+    assert.equal(to.origin + to.pathname, SERVICE + '/oauth/start');
+    const assertion = await svc.sign({ iss: SERVICE, aud: to.searchParams.get('return_to'), nonce: to.searchParams.get('nonce'), provider: 'google', verified: true, iat: Date.now(), exp: Date.now() + 300000, ...who });
+    return call('/auth/broker/callback?assertion=' + encodeURIComponent(assertion));
+  };
+  const ADA_G = { id: 'g-1', email: 'ada@example.com', name: 'Ada Lovelace' }, CODE = 'river-stone-42';
+
+  const A = await laptop(t, { svc }), a = A.browser();
+  assert.equal((await google(a, ADA_G)).location, '/');
+  assert.equal((await a('/auth/passcode', { body: { passcode: CODE, existing: true } })).status, 401, 'nothing to bring over yet');
+  assert.equal((await a('/auth/passcode', { body: { passcode: CODE } })).json.signedIn, true);
+  await a('/api/profiles', { body: { name: 'Work' } });
+
+  // Sync is turned on with the passcode and one emailed code, as for any account.
+  assert.equal((await a('/api/sync/start', { body: { password: 'wrong-passcode' } })).status, 401);
+  assert.equal((await a('/api/sync/start', { body: { password: CODE } })).json.waitingForCode, true);
+  assert.equal((await a('/api/sync/confirm', { body: { code: svc.inbox.at(-1).code } })).json.on, true);
+  // The service holds nothing it can read, and no key: the copy opens only with the passcode.
+  const held = JSON.stringify([...svc.data].map(([k, d]) => [k, [...d]]));
+  for (const secret of ['Ada', 'Lovelace', 'ada@example.com', 'Work', CODE]) assert.equal(held.includes(secret), false, `the service must not hold "${secret}"`);
+  assert.equal(held.includes('psk'), false);
+
+  // Computer B: Google proves who it is; the passcode from computer A brings the account over.
+  const B = await laptop(t, { svc }), b = B.browser();
+  assert.equal((await google(b, ADA_G)).location, '/');
+  assert.equal((await b('/auth/status')).json.needsPasscode, true);
+  assert.equal((await b('/api/profiles')).status, 401);
+  assert.equal((await b('/auth/passcode', { body: { passcode: 'not-the-passcode', existing: true } })).status, 401);
+  const r = await b('/auth/passcode', { body: { passcode: CODE, existing: true } });
+  assert.equal(r.status, 200, r.text); assert.equal(r.json.restored, true);
+  assert.deepEqual(names(await b('/api/profiles')), ['Main', 'Work']);
+  assert.equal((await b('/api/sync')).json.on, true);
+  const onB = B.spaces.all().map(s => s.store.kv('account:owner')).find(Boolean);
+  assert.equal(onB.fullName, 'Ada Lovelace'); assert.ok(onB.restoredAt); assert.match(onB.passwordHash, /^scrypt\$/);
+  // A different Google account gets nothing of Ada's, even with her passcode.
+  const C = await laptop(t, { svc }), c = C.browser();
+  await google(c, { id: 'g-2', email: 'eve@example.com', name: 'Eve Stone' });
+  assert.equal((await c('/auth/passcode', { body: { passcode: CODE, existing: true } })).status, 401);
 });

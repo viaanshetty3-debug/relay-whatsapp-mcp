@@ -4,6 +4,8 @@
 
 Decisions taken while building: the service stores hashes of password-derived keys (needed to sign in on a new computer); there is no email-only password reset for the synced copy (a computer that still has the account re-locks it; otherwise the owner replaces it after proving the email); turning sync off deletes the service's copy.
 
+**Update (2026-11-16):** accounts made with a sign-in provider (Google, GitHub and so on) have no country or phone and use a passcode (8+ characters) in place of a password. A provider sign-in leaves the session locked until the passcode is entered; the passcode also locks the synced copy, so the service never holds a key. A service-held key (one-click sync with no passcode) was built and dropped the same day: chats are private, so the owner chose the passcode. On a new computer: provider sign-in, then "I already use this account on another computer" and the passcode.
+
 ## What the user wants
 - A person signs in to **one Relay account** (for example "Business"). That account has its own WhatsApp connections, Claude connections and ChatGPT connections.
 - Signing in to the same account on **another laptop** brings those connections along.
