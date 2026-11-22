@@ -1,0 +1,49 @@
+name: Release
+
+# Publishes to npm and the MCP Registry when a version tag (for example v1.3.0) is pushed.
+# No tokens are stored: npm and the registry trust this workflow through GitHub's OIDC login
+# ("trusted publishing"), which is set up once on npmjs.com.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      # Trusted publishing needs a recent npm.
+      - run: npm install -g npm@latest
+
+      - name: Tag must match package.json and server.json
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          srv="$(node -p "require('./server.json').version")"
+          if [ "$tag" != "$pkg" ] || [ "$tag" != "$srv" ]; then
+            echo "Tag $tag, package.json $pkg, server.json $srv must all match."; exit 1
+          fi
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+
+      - name: Publish to npm
+        run: npm publish --provenance --access public
+
+      - name: Publish to the MCP Registry
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" | tar xz mcp-publisher
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish

@@ -1,6 +1,6 @@
 # Relay
 
-**Your WhatsApp, as 38 MCP tools for Claude and ChatGPT: self-hosted, failover-ready, and free to run.**
+**Your WhatsApp, as 44 MCP tools for Claude and ChatGPT: self-hosted, failover-ready, and free to run.**
 
 [![CI](https://github.com/viaanshetty3-debug/relay-whatsapp-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/viaanshetty3-debug/relay-whatsapp-mcp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)

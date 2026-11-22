@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.viaanshetty3-debug/relay-whatsapp-mcp",
   "title": "Relay for WhatsApp",
-  "description": "Your WhatsApp as 38 MCP tools: read, search, send and media across accounts, self-hosted.",
+  "description": "Your WhatsApp as 44 MCP tools: read, search, send and media across accounts, self-hosted.",
   "repository": {
     "url": "https://github.com/viaanshetty3-debug/relay-whatsapp-mcp",
     "source": "github"
