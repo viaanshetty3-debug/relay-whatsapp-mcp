@@ -23,8 +23,8 @@ jobs:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
 
-      # Trusted publishing needs a recent npm.
-      - run: npm install -g npm@latest
+      # Trusted publishing needs npm 11.5 or newer (npm 12 prints `npm pack --json` differently and breaks one test).
+      - run: npm install -g npm@11
 
       - name: Tag must match package.json and server.json
         run: |
