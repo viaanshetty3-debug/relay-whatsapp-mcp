@@ -7,6 +7,12 @@ export class DemoWhatsApp extends EventEmitter {
     super();this.store=store;this.config=config;this.unlinked=Boolean(config.demoUnlinked);this.linked=!this.unlinked;this.state=this.unlinked?'disconnected':'connected';this.qr=null;
     this.ids=['15550100001@s.whatsapp.net','120363000001@g.us','15550100002@s.whatsapp.net'];
     this.sock={user:{id:'15550000000@s.whatsapp.net'},readMessages:async()=>{},sendPresenceUpdate:async()=>{},presenceSubscribe:async()=>{},chatModify:async()=>{},groupMetadata:async id=>({id,subject:'Weekend crew',desc:'Plans for the weekend',participants:[{id:this.ids[0],admin:'admin'},{id:this.ids[2]}]}),groupUpdateSubject:async()=>{},groupUpdateDescription:async()=>{}};
+    const group=()=>({id:this.ids[1],subject:'Weekend crew',participants:[{id:this.ids[0]},{id:this.ids[2]},{id:this.sock.user.id}]});
+    Object.assign(this.sock,{fetchStatus:async()=>[{status:{status:'Practice mode: this is a sample About text',setAt:new Date()}}],profilePictureUrl:async()=>undefined,getBusinessProfile:async()=>undefined,
+      fetchBlocklist:async()=>this.blocked?[...this.blocked]:[],updateBlockStatus:async(j,action)=>{this.blocked??=new Set();action==='block'?this.blocked.add(j):this.blocked.delete(j);},
+      addOrEditContact:async()=>{},removeContact:async()=>{},groupFetchAllParticipating:async()=>({[this.ids[1]]:group()}),
+      groupCreate:async(subject,participants)=>{const id='1203630'+Date.now()+'@g.us';this.store.put('chats',{id,name:subject,conversationTimestamp:Math.floor(Date.now()/1000)});return {id,subject,participants:participants.map(id=>({id}))};},
+      groupParticipantsUpdate:async(_g,list)=>list.map(jid=>({jid,status:'200'}))});
     if(!this.unlinked)this.seed();
   }
   seed(){
@@ -27,7 +33,7 @@ export class DemoWhatsApp extends EventEmitter {
   raw(c,id){const m=this.store.getMessage(c,id);return m&&JSON.parse(m.raw);}
   async send(chat,content) {
     this.connected();
-    if(content.edit||content.delete||content.react||content.pin)return {chat,id:randomUUID(),status:'demo_submitted'};
+    if(content.edit||content.delete||content.react||content.pin||'disappearingMessagesInChat' in content)return {chat,id:randomUUID(),status:'demo_submitted'};
     const m=this.insert(chat,content.text || content.caption || content.poll?.name || (content.event&&'📅 '+content.event.name) || (content.contacts&&'👤 '+content.contacts.displayName) || '[attachment]',true);
     this.store.put('chats',{id:chat,preview:m.text,conversationTimestamp:m.timestamp});return {id:m.id,chat,key:m.key,status:'demo_submitted'};
   }

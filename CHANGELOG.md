@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **WhatsApp's Contact info and Edit contact screens, for Claude and ChatGPT.** Ten new tools: `get_contact_info` (About, photo, business details, blocked, mute and disappearing settings, starred and media counts, groups in common), `edit_contact`, `delete_contact`, `block_contact`, `set_disappearing_messages`, `clear_chat`, `create_group`, `add_to_group`, `list_starred` and `list_links` (54 tools). Searching a chat, media and docs, mute, sharing a contact and exporting a chat were already tools.
+- Not possible from a linked device, so not included: calls, chat theme, Save to Photos, Lock chat, Restricted chat, Favourites and lists, a contact's birthday, verifying the encryption code, and Report.
+
 ## 1.3.0 — 2026-11-19
 
 ### Added

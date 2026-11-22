@@ -195,6 +195,7 @@ export class Store extends EventEmitter {
   }
   messagesOfKind(kind) { return this.db.prepare('SELECT data FROM messages WHERE kind=?').all(kind).map(r => this.unseal(r.data, 'message')); }
   deleteMessage(chat, id) { this.db.prepare('DELETE FROM messages WHERE chat=? AND id=?').run(this.h(chat), id); }
+  clearMessages(chat) { return this.db.prepare('DELETE FROM messages WHERE chat=?').run(this.h(chat)).changes; }
   deleteChat(id) { this.db.prepare('DELETE FROM chats WHERE id=?').run(this.h(id)); }
   deleteDraft(id) { this.db.prepare('DELETE FROM drafts WHERE id=?').run(id); }
   event(type,chat,data) {
