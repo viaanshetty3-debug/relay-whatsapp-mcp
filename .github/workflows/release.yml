@@ -7,6 +7,8 @@ name: Release
 on:
   push:
     tags: ['v*']
+  # Manual run: publishes only to the MCP Registry (for when npm was published but the registry step failed).
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -27,6 +29,7 @@ jobs:
       - run: npm install -g npm@11
 
       - name: Tag must match package.json and server.json
+        if: github.event_name == 'push'
         run: |
           tag="${GITHUB_REF_NAME#v}"
           pkg="$(node -p "require('./package.json').version")"
@@ -36,14 +39,23 @@ jobs:
           fi
 
       - run: npm ci
+        if: github.event_name == 'push'
       - run: npm run lint
+        if: github.event_name == 'push'
       - run: npm test
+        if: github.event_name == 'push'
 
       - name: Publish to npm
+        if: github.event_name == 'push'
         run: npm publish --provenance --access public
 
       - name: Publish to the MCP Registry
         run: |
+          version="$(node -p "require('./server.json').version")"
+          for i in $(seq 1 30); do
+            npm view "relay-whatsapp-mcp@$version" version >/dev/null 2>&1 && break
+            echo "Waiting for npm to show $version ($i)..."; sleep 10
+          done
           curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" | tar xz mcp-publisher
           ./mcp-publisher login github-oidc
           ./mcp-publisher publish
