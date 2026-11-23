@@ -57,7 +57,7 @@
     "service": "node scripts/relay-service.mjs",
     "autostart": "node scripts/install-autostart.mjs",
     "mcp": "node src/stdio.js",
-    "test": "node --test test/*.test.js",
+    "test": "node --test --test-force-exit --test-timeout=120000 test/*.test.js",
     "lint": "node scripts/lint.mjs",
     "prepublishOnly": "npm run lint && npm test",
     "connect": "node scripts/connect.mjs"

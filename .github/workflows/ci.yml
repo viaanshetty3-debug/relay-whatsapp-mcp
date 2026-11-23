@@ -12,6 +12,7 @@ jobs:
   lint:
     name: Lint (syntax + tool catalog)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -22,6 +23,7 @@ jobs:
   test:
     name: Tests (${{ matrix.os }}, Node ${{ matrix.node }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -48,6 +50,7 @@ jobs:
   autostart-linux:
     name: Auto-start (Linux, systemd --user)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -80,6 +83,7 @@ jobs:
   autostart-windows:
     name: Auto-start (Windows, Task Scheduler)
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
