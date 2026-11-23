@@ -31,11 +31,14 @@ Needs [Node.js 22.13+](https://nodejs.org). Nothing to clone:
 npx relay-whatsapp-mcp
 ```
 
-Your browser opens <http://127.0.0.1:8787>. Create your account (Google, GitHub, or email), click **Connect WhatsApp**, and scan the QR code from **WhatsApp → Settings → Linked devices**. Then open **Connections** and click **Add to Claude Desktop** (or **Add to Claude Code**), and restart Claude. That's it: from then on Claude starts Relay by itself when it needs it. The same from a terminal:
+Then:
 
-```bash
-npx relay-whatsapp-mcp connect
-```
+1. Your browser opens <http://127.0.0.1:8787>. **Create your account** with Google, GitHub or email.
+2. Click **Connect WhatsApp** and scan the QR code from your phone: **WhatsApp → Settings → Linked devices → Link a device**.
+3. Open **Connections** and click **Add to Claude Desktop** or **Add to Claude Code**. This adds Relay to Claude's settings for you.
+4. **Quit and reopen Claude.** Ask it "List my recent WhatsApp chats". From now on Claude starts Relay in the background whenever it needs it; you don't have to start it yourself.
+
+Prefer the terminal for step 3? Run `npx relay-whatsapp-mcp connect` instead. For ChatGPT, see [Connect ChatGPT](#connect-chatgpt).
 
 <details><summary>Prefer to set it up by hand?</summary>
 
@@ -234,7 +237,19 @@ Each template has instructions for installing it by hand at the top. Logs go to 
    Its `wrangler.toml` links it straight to the `whatsapp-relay` Worker with a service binding: Cloudflare doesn't let one Worker call another on the same account by its public URL. If your relay is hosted elsewhere, delete the `[[services]]` block. Add the resulting `https://whatsapp-claude.<you>.workers.dev` address as `CLAUDE_DOORWAY_URL` in `.env`, then run `npm run setup -- --print`.
 3. In **claude.ai → Settings → Connectors → Add custom connector**, use the printed URL, choose *No sign-in*, and add the request header `x-api-key`.
 
-**ChatGPT:** ChatGPT custom connectors can't send custom headers, so they can't use the relay's client key. Expose the bridge itself over HTTPS (`PUBLIC_URL`, for example with [deploy/SELF-HOST.md](deploy/SELF-HOST.md)) and connect ChatGPT with OAuth, which is built into the bridge.
+### Connect ChatGPT
+
+ChatGPT runs on OpenAI's servers, so it can't reach a Relay that only runs on your computer, and its custom connectors can't send the relay's client key. It connects to the bridge itself, over HTTPS, and signs in with OAuth (built into the bridge).
+
+**You need:** a ChatGPT plan that allows custom connectors (check ChatGPT's settings; the free plan currently doesn't), and Relay on a public `https://` address: a server with a domain, set up with [deploy/SELF-HOST.md](deploy/SELF-HOST.md).
+
+1. On the server, run `node scripts/self-host.mjs setup --domain relay.example.com --email you@example.com`, then `node scripts/self-host.mjs start`. Check that `https://relay.example.com/healthz` opens.
+2. Open `https://relay.example.com`, create your account and click **Connect WhatsApp** to link it. Link each WhatsApp account on one bridge only: unlink it elsewhere first.
+3. In ChatGPT: **Settings → Connectors** (custom connectors are usually under **Advanced** or **Developer mode**) → **Create**. Name it *Relay*, set the URL to `https://relay.example.com/mcp`, and choose **OAuth**.
+4. ChatGPT opens Relay's approval page. Sign in with your Relay account and approve.
+5. In a new chat, turn the Relay connector on and ask "List my recent WhatsApp chats".
+
+Menu names in ChatGPT change from time to time; if they differ, look for "connectors" or "apps" in its settings.
 
 ### Free-tier budget
 
