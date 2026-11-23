@@ -60,7 +60,12 @@ async function laptop(t, { dir = mkdtempSync(join(tmpdir(), 'relay-acct-')), svc
   const main = open(config), spaces = new Spaces(config, new Profiles(config, main, { open }), { open, openProfile: open });
   server.on('request', createApp(spaces, config));
   const close = async () => { server.closeAllConnections(); await new Promise(r => server.close(r)); await spaces.stop(); main.store.close(); };
-  let closed = false; t.after(async () => { if (!closed) await close(); rmSync(dir, { recursive: true, force: true }); });
+  // A later laptop may reopen the same folder (a "restart"); on Windows an open database can't be deleted,
+  // so a busy folder is left for the last laptop using it, whose own cleanup removes it.
+  let closed = false; t.after(async () => {
+    if (!closed) await close();
+    try { rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch (e) { if (e.code !== 'EBUSY' && e.code !== 'EPERM') throw e; }
+  });
   const browser = () => {
     const jar = new Map();
     return async (path, { body, bearer, form } = {}) => {
